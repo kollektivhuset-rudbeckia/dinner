@@ -1,0 +1,77 @@
+{{/* The count fields, shared by the member form, the standing registration
+     and the public guest page. ID prefixes every input id, because the "mina"
+     page renders one of these per dinner evening on the same document. */}}
+{{define "countfields"}}
+{{$f := .Form}}{{$id := .ID}}
+{{/* Zero is what to say when nobody is filled in; it means something
+     different on a standing registration than on one evening's form. */}}
+<div class="count-group" data-count-group
+     data-count-zero="{{if .Zero}}{{.Zero}}{{else}}Ingen anmäld.{{end}}">
+	<div class="count-grid">
+		<div class="field count">
+			<label for="{{$id}}-adults">Vuxna</label>
+			<input id="{{$id}}-adults" name="adults" type="number" inputmode="numeric"
+			       min="0" max="20" step="1" value="{{$f.Adults}}" data-count="people">
+		</div>
+		<div class="field count">
+			<label for="{{$id}}-children">Barn</label>
+			<input id="{{$id}}-children" name="children" type="number" inputmode="numeric"
+			       min="0" max="20" step="1" value="{{$f.Children}}" data-count="people">
+		</div>
+		<div class="field count">
+			<label for="{{$id}}-vegans">Varav veganer</label>
+			<input id="{{$id}}-vegans" name="vegans" type="number" inputmode="numeric"
+			       min="0" max="40" step="1" value="{{$f.Vegans}}" data-count="diet">
+		</div>
+		<div class="field count">
+			<label for="{{$id}}-vegetarians">Varav vegetarianer</label>
+			<input id="{{$id}}-vegetarians" name="vegetarians" type="number" inputmode="numeric"
+			       min="0" max="40" step="1" value="{{$f.Vegetarians}}" data-count="diet">
+		</div>
+	</div>
+	<p class="hint count-hint" data-count-hint aria-live="polite"></p>
+	<div class="field">
+		<label for="{{$id}}-note">Specialkost eller allergier <small>frivilligt</small></label>
+		<input id="{{$id}}-note" name="note" type="text" maxlength="300"
+		       value="{{$f.Note}}" placeholder="T.ex. glutenfritt för ett barn, nötallergi">
+		<small class="hint">Syns för matlaget på matlistan. Skriv inget du inte vill att huset läser.</small>
+	</div>
+</div>
+{{end}}
+
+{{/* One household's line in the list of who is coming. */}}
+{{define "attendee"}}
+<li class="attendee{{if .Standing}} is-standing{{end}}{{if .Guest}} is-guest{{end}}">
+	<span class="attendee-name">
+		{{.Name}}
+		{{if .Apartment}}<small class="muted">{{.Apartment}}</small>{{end}}
+		{{if .Guest}}<span class="chip chip-guest">gäst{{if .Host}} hos {{.Host}}{{end}}</span>{{end}}
+		{{if .Standing}}<span class="chip" title="Kommer på sin stående anmälan">stående</span>{{end}}
+	</span>
+	<span class="attendee-counts">
+		{{if .Adults}}{{count .Adults "vuxen" "vuxna"}}{{end}}
+		{{if and .Adults .Children}} · {{end}}
+		{{if .Children}}{{count .Children "barn" "barn"}}{{end}}
+	</span>
+	<span class="attendee-diet">
+		{{if .Vegans}}<span class="chip chip-vegan">{{.Vegans}} vegan</span>{{end}}
+		{{if .Vegetarians}}<span class="chip chip-veg">{{.Vegetarians}} veg</span>{{end}}
+	</span>
+	{{if .Note}}<span class="attendee-note">{{.Note}}</span>{{end}}
+</li>
+{{end}}
+
+{{/* The four headline numbers the cooking team actually cooks from. */}}
+{{define "totals"}}
+<div class="stats">
+	<div class="stat stat-big">
+		<strong>{{.People}}</strong>
+		<span>{{plural .People "person" "personer"}}</span>
+	</div>
+	<div class="stat"><strong>{{.Adults}}</strong><span>{{plural .Adults "vuxen" "vuxna"}}</span></div>
+	<div class="stat"><strong>{{.Children}}</strong><span>barn</span></div>
+	<div class="stat stat-diet"><strong>{{.Omnivores}}</strong><span>äter allt</span></div>
+	<div class="stat stat-diet"><strong>{{.Vegetarians}}</strong><span>vegetariskt</span></div>
+	<div class="stat stat-diet"><strong>{{.Vegans}}</strong><span>veganskt</span></div>
+</div>
+{{end}}

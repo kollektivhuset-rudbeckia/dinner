@@ -1,0 +1,22 @@
+# The demo, built from this checkout. Nothing to configure, nothing to keep:
+#
+#   docker compose -f docker-compose.demo.yml up
+#
+# Then open http://localhost:8080 and log in with "demo" (or "admin").
+services:
+  demo:
+    build:
+      context: .
+      args:
+        VERSION: demo
+    image: dinners-rudbeckia:demo
+    container_name: dinners-demo
+    ports:
+      - "8080:8080"
+    environment:
+      DEMO: "true"
+      BASE_URL: http://localhost:8080
+      # An in-container path with no volume behind it: stop the container and
+      # every made-up registration goes with it.
+      DB_PATH: /tmp/demo.db
+      LOG_LEVEL: info

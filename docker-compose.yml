@@ -1,0 +1,46 @@
+services:
+  dinners:
+    image: ghcr.io/o5ten/dinners:latest
+    container_name: dinners-rudbeckia
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # --- Required ---------------------------------------------------------
+      DINNER_PASSWORD: ${DINNER_PASSWORD:?set DINNER_PASSWORD in .env}
+      BASE_URL: ${BASE_URL:-https://middag.rudbeckia.nu}
+
+      # --- Optional ---------------------------------------------------------
+      # Unlocks /admin: matlag, säsonger, uppehåll and the schedule.
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      # Keeps sessions alive across a password change if you set it yourself.
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      SESSION_DAYS: ${SESSION_DAYS:-90}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+
+      # --- Outgoing mail ----------------------------------------------------
+      # Without these the site still works; the cooking team's mail is only
+      # written to the log, and the list is still on the site.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Rudbeckia middagar}
+      SMTP_ENCRYPTION: ${SMTP_ENCRYPTION:-starttls}
+      SMTP_REPLY_TO: ${SMTP_REPLY_TO:-}
+    volumes:
+      - dinners-data:/data
+      # Mount your own house settings over the ones baked into the image.
+      - ./config.yaml:/config.yaml:ro
+    healthcheck:
+      # The image has no shell, so call the binary's own version flag rather
+      # than curl, which is not in there either.
+      test: ["CMD", "/dinners", "-version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  dinners-data:

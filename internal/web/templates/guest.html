@@ -1,0 +1,125 @@
+{{define "content"}}
+{{if .Data.Removed}}
+<div class="narrow">
+	<h1>Anmälan borttagen</h1>
+	<p class="muted">
+		Du är avanmäld från middagen {{dateLong .Data.Dinner.Date}}. Vill du ändå
+		komma får du anmäla dig på nytt.
+	</p>
+	<p><a class="button" href="/gast">Anmäl dig igen</a></p>
+</div>
+
+{{else if .Data.Token}}
+{{/* A guest came back to their own registration. */}}
+{{$d := .Data.Dinner}}
+<div class="narrow">
+	<div class="hero">
+		<h1>Din anmälan</h1>
+		<p class="lede">
+			{{titleCase (dateLongYear $d.Date)}}, maten serveras {{clock $d.Serving}}{{with $.Dinner.Location}} i {{.}}{{end}}.
+		</p>
+	</div>
+
+	{{if .Data.Saved}}<p class="alert alert-ok" role="status">Tack, din anmälan är sparad.</p>{{end}}
+	{{with .Data.Error}}<p class="alert alert-error" role="alert">{{.}}</p>{{end}}
+
+	{{if .Data.Open}}
+	<p class="summary">
+		Spara den här sidan om du vill ändra dig. Anmälan stänger
+		{{dateTime $d.Closes}}.
+	</p>
+	<section class="panel form-panel">
+		<form method="post" action="/gast/{{.Data.Token}}">
+			{{template "guestfields" dict "Form" .Data.Form "ID" "g"}}
+			<div class="form-actions">
+				<button type="submit" class="button primary">Spara ändringen</button>
+				<button type="submit" class="button ghost" name="action" value="delete"
+				        formnovalidate data-confirm="Ta bort din anmälan?">Jag kommer inte</button>
+			</div>
+		</form>
+	</section>
+	{{else}}
+	<p class="alert alert-warn">
+		Anmälan stängde {{dateTime $d.Closes}} och matlaget har fått listan, så
+		den går inte att ändra här längre. Hör av dig till den du ska hälsa på.
+	</p>
+	<div class="receipt">
+		<div class="receipt-row"><span>Namn</span><strong>{{.Data.Form.Name}}</strong></div>
+		{{with .Data.Form.Host}}<div class="receipt-row"><span>Hos</span><strong>{{.}}</strong></div>{{end}}
+		<div class="receipt-row"><span>Antal</span><strong>
+			{{count .Data.Form.Adults "vuxen" "vuxna"}}{{if .Data.Form.Children}}, {{count .Data.Form.Children "barn" "barn"}}{{end}}
+		</strong></div>
+		{{with .Data.Form.Note}}<div class="receipt-row"><span>Specialkost</span><strong>{{.}}</strong></div>{{end}}
+	</div>
+	{{end}}
+</div>
+
+{{else}}
+{{/* A visitor arriving at the public page. */}}
+<div class="narrow">
+	<div class="hero">
+		<h1>Anmäl dig till middag</h1>
+		<p class="lede">
+			{{if .Dinner.GuestInfo}}{{.Dinner.GuestInfo}}{{else}}
+			Ska du äta med oss i {{.Site.HouseName}}? Fyll i vem du är och hur många
+			ni blir, så vet matlaget hur mycket mat som ska lagas.{{end}}
+		</p>
+	</div>
+
+	{{with .Data.Error}}<p class="alert alert-error" role="alert">{{.}}</p>{{end}}
+
+	{{if .Data.Dinners}}
+	<section class="panel form-panel">
+		<form method="post" action="/gast">
+			<div class="field">
+				<label for="g-date">Vilken middag?</label>
+				<select id="g-date" name="date" required>
+					<option value="">Välj kväll …</option>
+					{{range .Data.Dinners}}
+					<option value="{{.Key}}" {{if eq .Key $.Data.Form.Date}}selected{{end}}>
+						{{titleCase (dateLong .Date)}} — anmälan stänger {{dateTime .Closes}}
+					</option>
+					{{end}}
+				</select>
+			</div>
+			{{template "guestfields" dict "Form" .Data.Form "ID" "g"}}
+			<div class="form-actions">
+				<button type="submit" class="button primary">Anmäl</button>
+			</div>
+		</form>
+	</section>
+	{{else}}
+	<p class="empty">
+		Just nu går det inte att anmäla sig till någon middag — antingen har
+		anmälan stängt för de närmaste kvällarna, eller så är säsongen slut.
+	</p>
+	{{end}}
+</div>
+{{end}}
+{{end}}
+
+{{/* The guest's own fields, plus the shared counts. */}}
+{{define "guestfields"}}
+{{$f := .Form}}{{$id := .ID}}
+<div class="field-grid">
+	<div class="field">
+		<label for="{{$id}}-name">Ditt namn</label>
+		<input id="{{$id}}-name" name="name" type="text" required autocomplete="name"
+		       value="{{$f.Name}}" placeholder="Kalle Svensson">
+	</div>
+	<div class="field">
+		<label for="{{$id}}-host">Vem hälsar du på? <small>frivilligt</small></label>
+		<input id="{{$id}}-host" name="host" type="text" autocomplete="off"
+		       value="{{$f.Host}}" placeholder="Anna Andersson">
+	</div>
+	<div class="field field-wide">
+		<label for="{{$id}}-email">Din e-post <small>frivilligt</small></label>
+		<input id="{{$id}}-email" name="email" type="email" autocomplete="email"
+		       value="{{$f.Email}}" placeholder="kalle@example.se">
+		<small class="hint">Bara så matlaget kan höra av sig. Adressen visas inte för huset.</small>
+	</div>
+</div>
+{{template "countfields" dict "Form" $f "ID" $id
+	"Zero" "Anmäl minst en person."}}
+{{end}}
+{{template "base" .}}

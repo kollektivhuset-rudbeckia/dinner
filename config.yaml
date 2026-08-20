@@ -1,0 +1,60 @@
+# Kollektivhuset Rudbeckia – husets gemensamma middagar.
+#
+# Den här filen beskriver det som är fast för installationen: husets namn,
+# vilka kvällar det lagas mat och när anmälan brukar stänga. Servern läser
+# filen vid start, så starta om containern efter en ändring.
+#
+# Matlag och säsonger står också här, men bara som utgångsläge: de skrivs in i
+# databasen första gången servern startar mot en tom databas, och därefter är
+# det administrationssidan som gäller. Ändrar du dem här igen händer ingenting.
+
+site:
+  title: Rudbeckia middagar
+  tagline: Kollektivhuset Rudbeckia
+  house_name: Kollektivhuset Rudbeckia
+  timezone: Europe/Stockholm
+  home_url: https://rudbeckia.nu
+  support_url: https://rudbeckia.nu/kontakt/
+  footer_note: Kollektivhuset Rudbeckia · Rosendal, Uppsala
+
+dinner:
+  # Vilka kvällar huset äter tillsammans. Används som förval för nya säsonger.
+  weekdays: [tisdag, torsdag]
+  serving_time: "18:00"
+  location: stora matsalen
+  guest_info: >
+    Ska du äta middag hos oss i Kollektivhuset Rudbeckia? Fyll i vem du är och
+    hur många ni blir, så vet matlaget hur mycket mat som ska lagas.
+
+# När anmälan stänger. Stoppet är veckovis, inte per middag: matlaget handlar
+# för hela veckan på en gång.
+#
+# weeks_before räknar hela veckor bakåt från måndagen i middagsveckan, och
+# weekday/time pekar ut ögonblicket i den veckan. Med värdena nedan stänger
+# anmälan till en middag vecka 36 på fredagen vecka 35, natten mot lördag.
+deadline:
+  weekday: fredag
+  time: "23:59"
+  weeks_before: 1
+
+# Matlagen, i den ordning de turas om.
+teams:
+  - name: Lag 1
+    leader: ""
+    email: ""
+  - name: Lag 2
+    leader: ""
+    email: ""
+  - name: Lag 3
+    leader: ""
+    email: ""
+  - name: Lag 4
+    leader: ""
+    email: ""
+
+# Den första säsongen. Ta bort blocket om du hellre lägger in den i
+# administrationen.
+# season:
+#   name: Hösten 2026
+#   start: 2026-08-25
+#   end: 2026-12-17

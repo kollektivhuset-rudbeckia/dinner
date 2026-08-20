@@ -1,0 +1,415 @@
+{{define "content"}}
+<div class="hero">
+	<h1>Administration</h1>
+	<p class="lede">
+		Matlag, säsong, schema och anmälningsstopp. Ändringarna slår igenom direkt
+		— schemat räknas fram ur säsongen och lagens ordning varje gång sidan visas.
+	</p>
+</div>
+
+{{with .Data.Saved}}
+<p class="alert alert-ok" role="status">
+	{{if eq . "utskick"}}Matlistan är skickad.
+	{{else if eq . "utskick-misslyckades"}}Utskicket gick inte fram. Titta i loggen.
+	{{else}}Sparat.{{end}}
+</p>
+{{end}}
+{{if not .Data.MailOn}}
+<p class="alert alert-warn">
+	SMTP är inte konfigurerat, så inga matlistor mejlas ut. Utskicken skrivs bara
+	i loggen. Sätt <code>SMTP_HOST</code> och <code>SMTP_FROM</code> för att slå på dem.
+</p>
+{{end}}
+
+<nav class="tabs" aria-label="Administrationens delar">
+	{{$tab := .Data.Tab}}
+	{{range .Data.Tabs}}
+	<a class="tab{{if eq .ID $tab}} is-current{{end}}" href="/admin?flik={{.ID}}"
+	   {{if eq .ID $tab}}aria-current="page"{{end}}>{{.Name}}</a>
+	{{end}}
+</nav>
+
+{{if eq .Data.Tab "schema"}}
+{{/* ---------------------------------------------------------- schedule -- */}}
+<section class="panel" id="schema">
+	<div class="panel-head">
+		<h2>Schema</h2>
+		<span class="muted small">
+			{{if .Data.Seasons}}
+			<form method="get" action="/admin" class="inline">
+				<select name="sasong" onchange="this.form.submit()" aria-label="Välj säsong">
+					{{range .Data.Seasons}}
+					<option value="{{.ID}}" {{if and $.Data.Season (eq .ID $.Data.Season.ID)}}selected{{end}}>{{.Name}}</option>
+					{{end}}
+				</select>
+				<noscript><button type="submit" class="button small">Visa</button></noscript>
+			</form>
+			{{end}}
+		</span>
+	</div>
+
+	{{if .Data.Rows}}
+	<p class="muted">
+		Lagen turas om i den ordning de står under <a href="#lag">Matlag</a>. Vill
+		du byta för en enskild kväll väljer du ett annat lag här — då står den
+		kvällen kvar oavsett hur rotationen ändras.
+	</p>
+	<div class="schedule">
+		{{range .Data.Rows}}
+		{{$d := .Dinner}}
+		<form method="post" action="/admin/schema" class="sched-row{{if $d.Cancelled}} is-cancelled{{end}}">
+			<input type="hidden" name="date" value="{{$d.Key}}">
+			<input type="hidden" name="back" value="/admin?sasong={{$d.Season.ID}}#schema">
+			<div class="sched-when">
+				<strong>{{weekdayShort $d.Date}} {{dateShort $d.Date}}</strong>
+				<small class="muted">v.{{$d.Week}}</small>
+			</div>
+			<div class="sched-team">
+				<label class="visually-hidden" for="team-{{$d.Key}}">Matlag {{dateShort $d.Date}}</label>
+				<select id="team-{{$d.Key}}" name="team_id">
+					<option value="">Enligt turordning{{with $d.Team}}{{if not $d.Assigned}} ({{.Name}}){{end}}{{end}}</option>
+					{{range $.Data.Teams}}
+					<option value="{{.ID}}" {{if and $d.Assigned $d.Team (eq .ID $d.Team.ID)}}selected{{end}}>{{.Name}}{{if .LeaderName}} · {{.LeaderName}}{{end}}</option>
+					{{end}}
+				</select>
+			</div>
+			<div class="sched-note">
+				<label class="visually-hidden" for="note-{{$d.Key}}">Meddelande {{dateShort $d.Date}}</label>
+				<input id="note-{{$d.Key}}" name="note" type="text" maxlength="200"
+				       value="{{$d.Note}}" placeholder="Meddelande till huset, t.ex. temakväll">
+			</div>
+			<label class="checkbox sched-off">
+				<input type="checkbox" name="cancelled" value="1" {{if $d.Cancelled}}checked{{end}}>
+				<span>Inställd</span>
+			</label>
+			<div class="sched-state">
+				<span class="chip">{{.Summary.People}} p</span>
+				{{if .Sent}}
+					<span class="chip chip-ok" title="Matlistan mejlades {{dateTime .SentAt}}">mejlad</span>
+				{{else if .Unmanned}}
+					<span class="chip chip-warn" title="Anmälan stängde utan att något lag var satt, så ingen fick listan">inget lag</span>
+				{{else if .Open}}
+					<span class="chip">öppen</span>
+				{{else}}
+					<span class="chip chip-warn">ej mejlad</span>
+				{{end}}
+			</div>
+			<div class="sched-actions">
+				<button type="submit" class="button small">Spara</button>
+				<a class="button small ghost" href="/middag/{{$d.Key}}/lista">Lista</a>
+			</div>
+		</form>
+		<form method="post" action="/admin/skicka" class="sched-send">
+			<input type="hidden" name="date" value="{{$d.Key}}">
+			<input type="hidden" name="back" value="/admin?sasong={{$d.Season.ID}}#schema">
+			<button type="submit" class="link-button"
+			        data-confirm="Mejla matlistan för {{dateShort $d.Date}} till lagledaren nu?">
+				{{if .Sent}}Mejla igen{{else}}Mejla nu{{end}}
+			</button>
+		</form>
+		{{end}}
+	</div>
+	{{with .Data.Breaks}}
+	<p class="muted small">
+		Uppehåll den här perioden:
+		{{range $i, $b := .}}{{if $i}} · {{end}}<strong>{{$b.Name}}</strong> {{$b.Start}}–{{$b.End}}{{end}}.
+		Kvällarna där finns inte, och turordningen står stilla över dem.
+	</p>
+	{{end}}
+	<p class="head-links">
+		<a class="quiet-link" href="/admin/export.csv{{with .Data.Season}}?fran={{.Start}}&amp;till={{.End}}{{end}}">Exportera säsongen som CSV →</a>
+	</p>
+	{{else}}
+	<p class="empty">Lägg in en säsong nedan, så räknas kvällarna fram här.</p>
+	{{end}}
+</section>
+{{end}}
+
+{{if eq .Data.Tab "lag"}}
+{{/* ------------------------------------------------------------- teams -- */}}
+<section class="panel" id="lag">
+	<div class="panel-head">
+		<h2>Matlag</h2>
+		<span class="muted small">{{len .Data.Teams}} lag</span>
+	</div>
+	<p class="muted">
+		Lagledarens adress är dit matlistan mejlas när anmälan stänger. Ett lag
+		som är avstängt hoppas över i turordningen.
+	</p>
+
+	<h3 class="section-title">Turordning</h3>
+	<p class="muted small">
+		Dra lagen i den ordning de ska laga, eller flytta dem med pilarna.
+		Ordningen gäller från säsongens första middag.
+	</p>
+	<form method="post" action="/admin/lag/ordning" data-order-form>
+		<input type="hidden" name="back" value="/admin?flik=lag">
+		<input type="hidden" name="order" value="{{range $i, $t := .Data.Teams}}{{if $i}},{{end}}{{$t.ID}}{{end}}" data-order-value>
+		<ol class="order-list" data-order-list>
+			{{range $i, $t := .Data.Teams}}
+			<li class="order-item{{if not $t.Active}} is-off{{end}}" draggable="true" data-id="{{$t.ID}}">
+				<span class="order-grip" aria-hidden="true">⠿</span>
+				<span class="order-rank">{{add1 $i}}</span>
+				<span class="order-name">
+					{{$t.Name}}
+					{{if $t.LeaderName}}<small class="muted">{{$t.LeaderName}}</small>{{end}}
+					{{if not $t.Active}}<span class="chip">avstängt</span>{{end}}
+				</span>
+				<span class="order-moves">
+					<button type="submit" name="up" value="{{$t.ID}}" class="icon-button"
+					        {{if eq $i 0}}disabled{{end}}
+					        aria-label="Flytta {{$t.Name}} uppåt">↑</button>
+					<button type="submit" name="down" value="{{$t.ID}}" class="icon-button"
+					        {{if eq (add1 $i) (len $.Data.Teams)}}disabled{{end}}
+					        aria-label="Flytta {{$t.Name}} nedåt">↓</button>
+				</span>
+			</li>
+			{{else}}
+			<li class="empty">Inga matlag ännu.</li>
+			{{end}}
+		</ol>
+		{{if .Data.Teams}}
+		<div class="form-actions">
+			<button type="submit" class="button small" data-order-save>Spara turordningen</button>
+		</div>
+		{{end}}
+	</form>
+
+	<h3 class="section-title">Lagen</h3>
+	<div class="team-list">
+		{{range .Data.Teams}}
+		<form method="post" action="/admin/lag" class="team-row">
+			<input type="hidden" name="id" value="{{.ID}}">
+			<input type="hidden" name="back" value="/admin#lag">
+			<div class="field"><label>Lag<input name="name" type="text" value="{{.Name}}" required></label></div>
+			<div class="field"><label>Lagledare<input name="leader_name" type="text" value="{{.LeaderName}}" placeholder="Anna Andersson"></label></div>
+			<div class="field"><label>E-post<input name="leader_email" type="email" value="{{.LeaderEmail}}" placeholder="anna@example.se"></label></div>
+			<label class="checkbox"><input type="checkbox" name="active" value="1" {{if .Active}}checked{{end}}><span>Med i turordningen</span></label>
+			<div class="team-actions">
+				<button type="submit" class="button small">Spara</button>
+				<button type="submit" class="button small ghost danger" name="action" value="delete"
+				        formnovalidate data-confirm="Ta bort {{.Name}}? Kvällar som pekar hit går tillbaka till turordningen.">Ta bort</button>
+			</div>
+		</form>
+		{{else}}
+		<p class="empty">Inga matlag ännu. Lägg till det första nedan.</p>
+		{{end}}
+	</div>
+
+	<h3 class="section-title">Nytt matlag</h3>
+	<p class="muted small">Nya lag hamnar sist i turordningen.</p>
+	<form method="post" action="/admin/lag" class="team-row">
+		<input type="hidden" name="back" value="/admin#lag">
+		<div class="field"><label>Lag<input name="name" type="text" required placeholder="Lag 1"></label></div>
+		<div class="field"><label>Lagledare<input name="leader_name" type="text" placeholder="Anna Andersson"></label></div>
+		<div class="field"><label>E-post<input name="leader_email" type="email" placeholder="anna@example.se"></label></div>
+		<label class="checkbox"><input type="checkbox" name="active" value="1" checked><span>Med i turordningen</span></label>
+		<div class="team-actions"><button type="submit" class="button small primary">Lägg till</button></div>
+	</form>
+</section>
+{{end}}
+
+{{if eq .Data.Tab "sasonger"}}
+{{/* ----------------------------------------------------------- seasons -- */}}
+<section class="panel" id="sasonger">
+	<div class="panel-head"><h2>Säsonger</h2></div>
+	<p class="muted">
+		En säsong är den period huset lagar mat, och vilka kvällar i veckan det
+		gäller. Utanför säsongerna finns inga middagar att anmäla sig till.
+	</p>
+
+	{{range .Data.Seasons}}
+	<form method="post" action="/admin/sasong" class="season-row">
+		<input type="hidden" name="id" value="{{.ID}}">
+		<input type="hidden" name="back" value="/admin#sasonger">
+		<div class="field"><label>Namn<input name="name" type="text" value="{{.Name}}" required></label></div>
+		<div class="field"><label>Från<input name="start" type="date" value="{{.Start}}" required></label></div>
+		<div class="field"><label>Till<input name="end" type="date" value="{{.End}}" required></label></div>
+		<fieldset class="weekdays">
+			<legend>Middagskvällar</legend>
+			{{$se := .}}
+			{{range $.Data.Weekdays}}
+			<label class="checkbox">
+				<input type="checkbox" name="weekdays" value="{{printf "%d" (weekdayNum .)}}"
+				       {{if hasWeekday $se.Weekdays .}}checked{{end}}>
+				<span>{{weekdayName .}}</span>
+			</label>
+			{{end}}
+		</fieldset>
+		<div class="field field-narrow">
+			<label>Startlag<input name="rotation_offset" type="number" value="{{.RotationOffset}}" min="0" max="99"></label>
+			<small class="hint">0 = första laget i listan tar säsongens första middag.</small>
+		</div>
+		<div class="team-actions">
+			<button type="submit" class="button small">Spara</button>
+			<button type="submit" class="button small ghost danger" name="action" value="delete"
+			        formnovalidate data-confirm="Ta bort säsongen {{.Name}}? Anmälningarna ligger kvar men blir oåtkomliga.">Ta bort</button>
+		</div>
+	</form>
+	{{else}}
+	<p class="empty">Ingen säsong inlagd.</p>
+	{{end}}
+
+	<h3 class="section-title">Ny säsong</h3>
+	<form method="post" action="/admin/sasong" class="season-row">
+		<input type="hidden" name="back" value="/admin#sasonger">
+		<div class="field"><label>Namn<input name="name" type="text" placeholder="Hösten {{.Now.Year}}" required></label></div>
+		<div class="field"><label>Från<input name="start" type="date" required></label></div>
+		<div class="field"><label>Till<input name="end" type="date" required></label></div>
+		<fieldset class="weekdays">
+			<legend>Middagskvällar</legend>
+			{{range .Data.Weekdays}}
+			<label class="checkbox">
+				<input type="checkbox" name="weekdays" value="{{printf "%d" (weekdayNum .)}}"
+				       {{if hasWeekday $.Dinner.ParsedWeekdays .}}checked{{end}}>
+				<span>{{weekdayName .}}</span>
+			</label>
+			{{end}}
+		</fieldset>
+		<div class="field field-narrow">
+			<label>Startlag<input name="rotation_offset" type="number" value="{{.Data.NextSeasonOffset}}" min="0" max="99"></label>
+			<small class="hint">Föreslaget så att lagen fortsätter där förra säsongen slutade.</small>
+		</div>
+		<div class="team-actions"><button type="submit" class="button small primary">Lägg till</button></div>
+	</form>
+</section>
+{{end}}
+
+{{if eq .Data.Tab "uppehall"}}
+{{/* ------------------------------------------------------------ breaks -- */}}
+<section class="panel" id="uppehall">
+	<div class="panel-head"><h2>Uppehåll</h2></div>
+	<p class="muted">
+		Veckor och dagar då huset inte lagar mat: skollov, röda dagar, en vecka
+		mitt i terminen. Kvällarna inne i ett uppehåll försvinner ur schemat, och
+		<strong>turordningen står stilla</strong> över dem — det lag som stod på tur
+		lagar första middagen efter uppehållet i stället för att missa sin gång.
+	</p>
+
+	{{range .Data.Breaks}}
+	<form method="post" action="/admin/uppehall" class="season-row">
+		<input type="hidden" name="id" value="{{.ID}}">
+		<input type="hidden" name="back" value="/admin#uppehall">
+		<div class="field"><label>Vad<input name="name" type="text" value="{{.Name}}" required></label></div>
+		<div class="field"><label>Från<input name="start" type="date" value="{{.Start}}" required></label></div>
+		<div class="field"><label>Till<input name="end" type="date" value="{{.End}}"></label></div>
+		<div class="team-actions">
+			<button type="submit" class="button small">Spara</button>
+			<button type="submit" class="button small ghost danger" name="action" value="delete"
+			        formnovalidate data-confirm="Ta bort uppehållet {{.Name}}? Kvällarna kommer tillbaka i schemat.">Ta bort</button>
+		</div>
+	</form>
+	{{else}}
+	<p class="empty">Inga uppehåll inlagda — det lagas mat varje middagskväll hela säsongen.</p>
+	{{end}}
+
+	<h3 class="section-title">Nytt uppehåll</h3>
+	<form method="post" action="/admin/uppehall" class="season-row">
+		<input type="hidden" name="back" value="/admin#uppehall">
+		<div class="field"><label>Vad<input name="name" type="text" placeholder="Höstlov" required></label></div>
+		<div class="field"><label>Från<input name="start" type="date" required></label></div>
+		<div class="field">
+			<label>Till<input name="end" type="date"></label>
+			<small class="hint">Lämna tomt för en enda dag.</small>
+		</div>
+		<div class="team-actions"><button type="submit" class="button small primary">Lägg till</button></div>
+	</form>
+</section>
+{{end}}
+
+{{if eq .Data.Tab "installningar"}}
+{{/* ---------------------------------------------------------- settings -- */}}
+<section class="panel" id="installningar">
+	<div class="panel-head"><h2>Inställningar</h2></div>
+	<form method="post" action="/admin/installningar">
+		<input type="hidden" name="back" value="/admin#installningar">
+		<h3 class="section-title">Anmälningsstopp</h3>
+		<p class="muted">
+			Anmälan stänger en gång i veckan, inte per middag: matlaget handlar för
+			hela veckan på en gång. Räkna bakåt från måndagen i middagsveckan.
+		</p>
+		<div class="field-grid">
+			<div class="field">
+				<label for="dl-weeks">Antal hela veckor före middagsveckan</label>
+				<input id="dl-weeks" name="deadline_weeks_before" type="number" min="0" max="8"
+				       value="{{.Data.Settings.DeadlineWeeksBefore}}">
+			</div>
+			<div class="field">
+				<label for="dl-wd">Veckodag</label>
+				<select id="dl-wd" name="deadline_weekday">
+					{{range .Data.Weekdays}}
+					<option value="{{printf "%d" (weekdayNum .)}}"
+					        {{if eq . $.Data.Settings.DeadlineWeekday}}selected{{end}}>{{weekdayName .}}</option>
+					{{end}}
+				</select>
+			</div>
+			<div class="field">
+				<label for="dl-time">Klockslag</label>
+				<input id="dl-time" name="deadline_time" type="time"
+				       value="{{clockMinutes .Data.Settings.DeadlineMinutes}}">
+				<small class="hint">23:59 betyder natten mot dagen efter.</small>
+			</div>
+		</div>
+		{{with .Data.Rows}}
+		{{$first := index . 0}}
+		<p class="summary">
+			Med den här inställningen stängde anmälan till
+			{{dateLong $first.Dinner.Date}} klockan {{clock $first.Dinner.Closes}} den
+			{{dateLong $first.Dinner.Closes}}.
+		</p>
+		{{end}}
+
+		<h3 class="section-title">Gästanmälan</h3>
+		<label class="checkbox">
+			<input type="checkbox" name="guest_open" value="1" {{if .Data.Settings.GuestOpen}}checked{{end}}>
+			<span>Låt gäster anmäla sig utan lösenord</span>
+		</label>
+		<p class="hint">
+			Länken att ge till gäster: <code>{{.Data.GuestURL}}</code>
+		</p>
+
+		<div class="form-actions"><button type="submit" class="button primary">Spara inställningar</button></div>
+	</form>
+</section>
+{{end}}
+
+{{if eq .Data.Tab "staende"}}
+{{/* --------------------------------------------------------- standing --- */}}
+<section class="panel" id="staende">
+	<div class="panel-head">
+		<h2>Stående anmälningar</h2>
+		<span class="muted small">{{len .Data.Standing}} st</span>
+	</div>
+	<p class="muted">
+		Hushåll som är med varje gång utan att anmäla sig. Den som vill ändra gör
+		det själv under <em>Mina anmälningar</em>.
+	</p>
+	{{if .Data.Standing}}
+	<div class="table-wrap">
+		<table class="table">
+			<thead>
+				<tr><th>Namn</th><th>Lgh</th><th>Kväll</th><th class="num">Vuxna</th><th class="num">Barn</th>
+				<th class="num">Vegan</th><th class="num">Veg</th><th>Specialkost</th><th>E-post</th></tr>
+			</thead>
+			<tbody>
+				{{range .Data.Standing}}
+				<tr>
+					<td>{{.Name}}</td><td>{{.Apartment}}</td>
+					<td>{{weekdayName .Weekday}}ar</td>
+					<td class="num">{{.Adults}}</td><td class="num">{{.Children}}</td>
+					<td class="num">{{if .Vegans}}{{.Vegans}}{{end}}</td>
+					<td class="num">{{if .Vegetarians}}{{.Vegetarians}}{{end}}</td>
+					<td>{{.Note}}</td>
+					<td class="muted small">{{.Email}}</td>
+				</tr>
+				{{end}}
+			</tbody>
+		</table>
+	</div>
+	{{else}}
+	<p class="empty">Ingen har lagt upp en stående anmälan ännu.</p>
+	{{end}}
+</section>
+{{end}}
+{{end}}
+{{template "base" .}}

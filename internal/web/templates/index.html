@@ -1,0 +1,97 @@
+{{define "content"}}
+<div class="hero">
+	<h1>Middagar i huset</h1>
+	<p class="lede">
+		Vi äter tillsammans {{joinWeekdays .Dinner.ParsedWeekdays}}
+		{{- with .Dinner.ServingTime}} klockan {{.}}{{end}}
+		{{- with .Dinner.Location}} i {{.}}{{end}}.
+		Anmäl dig innan matlaget handlar, så blir det lagom mycket mat.
+	</p>
+</div>
+
+{{if .Data.NoSchedule}}
+<div class="panel">
+	<h2>Ingen säsong är inlagd ännu</h2>
+	<p class="muted">
+		Så fort matgruppen lägger in en säsong med start- och slutdatum dyker
+		kvällarna upp här.
+	</p>
+	{{if .Role.Admin}}<p><a class="button primary" href="/admin">Lägg in en säsong</a></p>{{end}}
+</div>
+{{else}}
+
+{{with .Data.Season}}
+<p class="crumbs">
+	<strong>{{.Name}}</strong>
+	<span aria-hidden="true">·</span>
+	{{.Start}} – {{.End}}
+</p>
+{{end}}
+
+<ul class="dinner-list">
+	{{range .Data.Rows}}
+	{{if .Break}}
+	<li class="dinner-pause">
+		<span class="pause-label">Uppehåll</span>
+		<strong>{{.Break.Name}}</strong>
+		<span class="muted">{{.Break.Start}} – {{.Break.End}} · ingen middag</span>
+	</li>
+	{{else}}
+	{{$d := .Dinner}}
+	<li class="dinner-card{{if $d.Cancelled}} is-cancelled{{end}}{{if .Answered}} is-mine{{end}}">
+		<a class="dinner-when" href="/middag/{{$d.Key}}">
+			<span class="dinner-wd">{{weekdayShort $d.Date}}</span>
+			<span class="dinner-day">{{$d.Date.Day}}</span>
+			<span class="dinner-mon">{{month $d.Date}}</span>
+		</a>
+		<div class="dinner-body">
+			<h2 class="dinner-title">
+				<a href="/middag/{{$d.Key}}">{{titleCase (dateLong $d.Date)}}</a>
+			</h2>
+			<p class="dinner-facts">
+				{{if $d.Cancelled}}
+					<span class="badge badge-off">Inställd</span>
+				{{else if .Open}}
+					<span class="badge badge-free">Anmälan öppen</span>
+					<span class="muted small">stänger {{dateTime $d.Closes}} · {{countdown $d.Closes $.Now}}</span>
+				{{else}}
+					<span class="badge badge-busy">Anmälan stängd</span>
+					<span class="muted small">stängde {{dateTime $d.Closes}}</span>
+				{{end}}
+			</p>
+			{{with $d.Note}}<p class="dinner-note">{{.}}</p>{{end}}
+			{{if not $d.Cancelled}}
+			<p class="dinner-mine">
+				{{with .Mine}}
+					{{if .People}}
+						<span class="ok-text">✓ Ni är anmälda:</span>
+						{{if .Adults}}{{count .Adults "vuxen" "vuxna"}}{{end}}{{if and .Adults .Children}}, {{end}}{{if .Children}}{{count .Children "barn" "barn"}}{{end}}
+						{{if .Standing}}<span class="chip" title="Från din stående anmälan">stående</span>{{end}}
+					{{else}}
+						<span class="muted">Ni har tackat nej till den här middagen.</span>
+					{{end}}
+				{{else}}
+					<span class="muted">Du har inte anmält dig.</span>
+				{{end}}
+			</p>
+			{{end}}
+		</div>
+		<div class="dinner-side">
+			<a class="button small{{if and .Open (not .Answered)}} primary{{end}}" href="/middag/{{$d.Key}}">
+				{{if $d.Cancelled}}Visa{{else if not .Open}}Se listan{{else if .Answered}}Ändra{{else}}Anmäl dig{{end}}
+			</a>
+		</div>
+	</li>
+	{{end}}
+	{{else}}
+	<li class="empty">Inga fler middagar den här säsongen.</li>
+	{{end}}
+</ul>
+
+<p class="head-links">
+	<a class="quiet-link" href="/mina">Mina anmälningar och stående anmälan →</a>
+	{{if .GuestOpen}}<a class="quiet-link" href="/gast">Länk att ge till gäster →</a>{{end}}
+</p>
+{{end}}
+{{end}}
+{{template "base" .}}

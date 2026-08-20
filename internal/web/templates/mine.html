@@ -1,0 +1,109 @@
+{{define "content"}}
+<div class="hero">
+	<h1>Mina anmälningar</h1>
+	<p class="lede">
+		Anmälan hör till <strong>{{.Ident.Email}}</strong>. Adressen syns bara för
+		dig och för matgruppen — aldrig för andra i huset.
+		<a href="/jagar">Ändra mina uppgifter</a>
+	</p>
+</div>
+
+{{if .Data.Saved}}<p class="alert alert-ok" role="status">Sparat.</p>{{end}}
+
+<section class="panel">
+	<div class="panel-head">
+		<h2>Stående anmälan</h2>
+	</div>
+	<p class="muted">
+		En stående anmälan betyder att ni räknas med <strong>varje gång</strong>,
+		utan att ni behöver göra något. Ni kan alltid hoppa över en enskild kväll
+		på den middagens sida — då gäller det bara den kvällen.
+	</p>
+
+	<div class="standing-grid">
+		{{range .Data.Standing}}
+		<div class="standing-card{{if .Set}} is-on{{end}}">
+			<h3>Varje {{weekdayName .Weekday}}</h3>
+
+			{{if .Set}}
+			<p class="standing-state">
+				<strong class="ok-text">✓ Påslagen</strong> —
+				{{if .Form.Adults}}{{count .Form.Adults "vuxen" "vuxna"}}{{end}}{{if and .Form.Adults .Form.Children}} och {{end}}{{if .Form.Children}}{{count .Form.Children "barn" "barn"}}{{end}}
+				{{- if .Form.Vegans}}, {{.Form.Vegans}} veganskt{{end}}
+				{{- if .Form.Vegetarians}}, {{.Form.Vegetarians}} vegetariskt{{end}}.
+			</p>
+			{{else}}
+			<p class="standing-state">
+				<strong class="muted">Avstängd</strong> — ni anmäler er en kväll i taget.
+			</p>
+			{{end}}
+
+			<details class="standing-edit" {{if not .Set}}open{{end}}>
+				<summary>{{if .Set}}Ändra antal{{else}}Slå på stående anmälan{{end}}</summary>
+				<form method="post" action="/stadigvarande">
+					<input type="hidden" name="weekday" value="{{printf "%d" .Weekday}}">
+					{{template "countfields" dict "Form" .Form "ID" (printf "st%d" .Weekday)
+	"Zero" "Noll personer betyder ingen stående anmälan alls."}}
+					<div class="form-actions">
+						<button type="submit" class="button primary">
+							{{if .Set}}Spara ändringen{{else}}Slå på stående anmälan{{end}}
+						</button>
+					</div>
+				</form>
+			</details>
+
+			{{if .Set}}
+			<form method="post" action="/stadigvarande" class="standing-off">
+				<input type="hidden" name="weekday" value="{{printf "%d" .Weekday}}">
+				<input type="hidden" name="action" value="clear">
+				<button type="submit" class="button small ghost danger"
+				        data-confirm="Ta bort den stående anmälan för {{weekdayName .Weekday}}ar? Ni räknas inte längre med automatiskt.">
+					Ta bort stående anmälan
+				</button>
+				<p class="hint">
+					Ni försvinner ur kommande middagar som ni inte anmält er till för hand.
+				</p>
+			</form>
+			{{end}}
+		</div>
+		{{else}}
+		<p class="empty">Ingen säsong är inlagd ännu, så det finns inga kvällar att stå på.</p>
+		{{end}}
+	</div>
+</section>
+
+<section class="panel">
+	<div class="panel-head">
+		<h2>Kommande middagar för er</h2>
+		<a class="quiet-link" href="/">Alla middagar</a>
+	</div>
+	{{if .Data.Mine}}
+	<ul class="booking-list">
+		{{range .Data.Mine}}
+		{{$d := .Dinner}}
+		<li>
+			<a href="/middag/{{$d.Key}}">
+				<strong>{{titleCase (dateLong $d.Date)}}</strong>
+				{{with .Mine}}
+					{{if .People}}
+						<span class="chip">{{if .Adults}}{{count .Adults "vuxen" "vuxna"}}{{end}}{{if and .Adults .Children}} · {{end}}{{if .Children}}{{count .Children "barn" "barn"}}{{end}}</span>
+						{{if .Standing}}<span class="chip">stående</span>{{end}}
+					{{else}}
+						<span class="chip">kommer inte</span>
+					{{end}}
+				{{end}}
+				{{if not .Open}}<small class="muted">anmälan stängd</small>{{end}}
+				{{if $d.Cancelled}}<span class="badge badge-off">inställd</span>{{end}}
+			</a>
+		</li>
+		{{end}}
+	</ul>
+	{{else}}
+	<p class="empty">
+		Ni är inte med på någon kommande middag. Slå på en stående anmälan ovan,
+		eller <a href="/">anmäl er till en kväll</a>.
+	</p>
+	{{end}}
+</section>
+{{end}}
+{{template "base" .}}

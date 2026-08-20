@@ -1,0 +1,12 @@
+# Local database and its WAL sidecars
+/data/
+*.db
+*.db-shm
+*.db-wal
+
+# Local secrets
+.env
+
+# Build output
+/dinners
+/dist/

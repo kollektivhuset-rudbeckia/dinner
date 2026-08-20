@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race -count=1 ./...
+
+      - name: Validate the bundled configuration
+        run: go run ./cmd/server -check-config
+        env:
+          # -check-config needs no secrets
+          CONFIG_PATH: config.yaml
+
+      # The demo is the first thing a newcomer runs, so make sure it starts,
+      # seeds itself and serves a page.
+      - name: Smoke test the demo
+        run: |
+          DB_PATH=$(mktemp -d)/demo.db go run ./cmd/server -demo &
+          pid=$!
+          trap 'kill $pid' EXIT
+          for _ in $(seq 1 40); do
+            curl -sf http://localhost:8080/healthz >/dev/null && break
+            sleep 0.5
+          done
+          curl -sf http://localhost:8080/healthz
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            -d 'password=demo' http://localhost:8080/login)
+          test "$code" = "303" || { echo "demo login returned $code"; exit 1; }
+          # The guest page is the one thing that must work without a password.
+          curl -sf http://localhost:8080/gast >/dev/null \
+            || { echo "the guest page did not answer"; exit 1; }
+          echo "demo starts, accepts the demo password and serves the guest page"
+
+  image:
+    name: Build the image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      # A pull request never pushes anything, but a Dockerfile that stopped
+      # building should still fail the build rather than the release.
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

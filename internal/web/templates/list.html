@@ -1,0 +1,126 @@
+{{define "content"}}
+{{$d := .Data.Dinner}}{{$sum := .Data.Summary}}
+<div class="sheet">
+	<header class="sheet-head">
+		<div>
+			<h1>Matlista</h1>
+			<p class="sheet-when">
+				{{titleCase (dateLongYear $d.Date)}} · vecka {{$d.Week}} ·
+				serveras {{clock $d.Serving}}{{with $.Dinner.Location}} i {{.}}{{end}}
+			</p>
+		</div>
+		<img class="sheet-mark" src="/static/rudbeckia.png" alt="" width="48" height="48">
+	</header>
+
+	<p class="sheet-meta">
+		{{with $d.Team}}<strong>{{.Name}}</strong>{{if .LeaderName}} · {{.LeaderName}}{{end}}{{else}}<strong>Inget matlag utsett</strong>{{end}}
+		<span aria-hidden="true">·</span>
+		{{if .Data.Open}}
+			Anmälan är fortfarande öppen till {{dateTime $d.Closes}} — siffrorna kan ändras.
+		{{else}}
+			Anmälan stängde {{dateTime $d.Closes}}.
+		{{end}}
+	</p>
+
+	{{if $d.Cancelled}}
+	<p class="alert alert-warn">Middagen är inställd.</p>
+	{{end}}
+
+	{{if .Data.Open}}
+	<p class="alert alert-warn no-print">
+		Anmälan har inte stängt ännu. Vänta med att handla tills
+		{{dateTime $d.Closes}} — det brukar komma fler.
+	</p>
+	{{end}}
+
+	<h2 class="sheet-title">Så mycket mat</h2>
+	{{template "totals" $sum}}
+	<p class="sheet-line">
+		Totalt <strong>{{people $sum.People}}</strong> från
+		{{count $sum.Households "hushåll" "hushåll"}}{{if $sum.Guests}}, varav {{$sum.Guests}} {{plural $sum.Guests "gäst" "gäster"}}{{end}}:
+		{{count $sum.Adults "vuxen" "vuxna"}} och {{count $sum.Children "barn" "barn"}}.
+		Av dem äter <strong>{{$sum.Omnivores}}</strong> allt,
+		<strong>{{$sum.Vegetarians}}</strong> vegetariskt och
+		<strong>{{$sum.Vegans}}</strong> veganskt.
+	</p>
+
+	<h2 class="sheet-title">Specialkost och allergier
+		<small>({{len $sum.Notes}} {{plural (len $sum.Notes) "anmäld" "anmälda"}})</small>
+	</h2>
+	{{if $sum.Notes}}
+	<ul class="notes notes-print">
+		{{range $sum.Notes}}<li><strong>{{.Name}}</strong> — {{.Text}}</li>{{end}}
+	</ul>
+	{{else}}
+	<p class="muted">Ingen har anmält någon specialkost eller allergi.</p>
+	{{end}}
+
+	<h2 class="sheet-title">Vilka kommer</h2>
+	{{if $sum.Attendees}}
+	<table class="table sheet-table">
+		<thead>
+			<tr>
+				<th>Namn</th><th>Lgh</th><th class="num">Vuxna</th><th class="num">Barn</th>
+				<th class="num">Vegan</th><th class="num">Veg</th><th>Specialkost</th>
+				{{if $.Role.Admin}}<th class="no-print"><span class="visually-hidden">Åtgärd</span></th>{{end}}
+			</tr>
+		</thead>
+		<tbody>
+			{{range $sum.Attendees}}
+			<tr>
+				<td>
+					{{.Name}}
+					{{if .Guest}}<small class="muted">gäst{{if .Host}} hos {{.Host}}{{end}}</small>{{end}}
+					{{if .Standing}}<small class="muted">stående anmälan</small>{{end}}
+				</td>
+				<td>{{.Apartment}}</td>
+				<td class="num">{{if .Adults}}{{.Adults}}{{end}}</td>
+				<td class="num">{{if .Children}}{{.Children}}{{end}}</td>
+				<td class="num">{{if .Vegans}}{{.Vegans}}{{end}}</td>
+				<td class="num">{{if .Vegetarians}}{{.Vegetarians}}{{end}}</td>
+				<td>{{.Note}}</td>
+				{{if $.Role.Admin}}
+				<td class="no-print">
+					{{if .ID}}
+					<form method="post" action="/admin/anmalan">
+						<input type="hidden" name="id" value="{{.ID}}">
+						<input type="hidden" name="back" value="/admin?flik=schema">
+						<button type="submit" class="link-button danger-text"
+						        data-confirm="Ta bort anmälan för {{.Name}}?">Ta bort</button>
+					</form>
+					{{end}}
+				</td>
+				{{end}}
+			</tr>
+			{{end}}
+		</tbody>
+		<tfoot>
+			<tr>
+				<th>Summa</th><th></th>
+				<th class="num">{{$sum.Adults}}</th><th class="num">{{$sum.Children}}</th>
+				<th class="num">{{$sum.Vegans}}</th><th class="num">{{$sum.Vegetarians}}</th>
+				<th></th>{{if .Role.Admin}}<th class="no-print"></th>{{end}}
+			</tr>
+		</tfoot>
+	</table>
+	{{else}}
+	<p class="empty">Ingen har anmält sig.</p>
+	{{end}}
+
+	{{if $sum.Declined}}
+	<p class="sheet-declined muted small">
+		Har tackat nej: {{range $i, $a := $sum.Declined}}{{if $i}}, {{end}}{{$a.Name}}{{end}}
+	</p>
+	{{end}}
+
+	<footer class="sheet-foot muted small">
+		{{.Site.HouseName}} · utskriven {{dateTime .Now}}
+	</footer>
+</div>
+
+<div class="sheet-actions no-print">
+	<button type="button" class="button primary" data-print>Skriv ut</button>
+	{{if not .Bare}}<a class="button ghost" href="/middag/{{$d.Key}}">Tillbaka till middagen</a>{{end}}
+</div>
+{{end}}
+{{template "base" .}}

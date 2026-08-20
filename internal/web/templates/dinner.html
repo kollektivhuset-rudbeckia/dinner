@@ -1,0 +1,87 @@
+{{define "content"}}
+{{$d := .Data.Dinner}}
+<div class="narrow">
+	<p class="crumbs">
+		<a href="/">Middagar</a>
+		<span aria-hidden="true">›</span>
+		{{titleCase (dateLong $d.Date)}}
+	</p>
+
+	<div class="hero">
+		<h1>{{titleCase (dateLongYear $d.Date)}}</h1>
+		<p class="lede">
+			{{if $d.Cancelled}}
+				Den här middagen är inställd.
+			{{else}}
+				Maten står på bordet {{clock $d.Serving}}{{with $.Dinner.Location}} i {{.}}{{end}}.
+				{{if .Data.Open}}
+					Anmälan är öppen till {{dateTime $d.Closes}}.
+				{{else}}
+					Anmälan stängde {{dateTime $d.Closes}}.
+				{{end}}
+			{{end}}
+		</p>
+		{{with $d.Note}}<p class="note">{{.}}</p>{{end}}
+	</div>
+
+	{{if .Data.Saved}}<p class="alert alert-ok" role="status">Tack, din anmälan är sparad.</p>{{end}}
+	{{with .Data.Error}}<p class="alert alert-error" role="alert">{{.}}</p>{{end}}
+
+	{{/* Where the household stands right now, in one sentence. */}}
+	<p class="status-line">
+		{{with .Data.Mine}}
+			{{if .People}}
+				<strong class="ok-text">✓ Ni är anmälda</strong>
+				— {{if .Adults}}{{count .Adults "vuxen" "vuxna"}}{{end}}{{if and .Adults .Children}} och {{end}}{{if .Children}}{{count .Children "barn" "barn"}}{{end}}{{if .Vegans}}, {{.Vegans}} veganskt{{end}}{{if .Vegetarians}}, {{.Vegetarians}} vegetariskt{{end}}.
+				{{if .Standing}}<a href="/mina">Från din stående anmälan.</a>{{end}}
+			{{else}}
+				<strong>Ni kommer inte</strong> på den här middagen.
+			{{end}}
+		{{else}}
+			<strong>Du har inte anmält dig.</strong>
+		{{end}}
+	</p>
+
+	{{if and .Data.Open (not $d.Cancelled)}}
+	<section class="panel form-panel">
+		<div class="panel-head">
+			<h2>{{if .Data.Mine}}Ändra er anmälan{{else}}Anmäl ditt hushåll{{end}}</h2>
+			<span class="muted small">{{countdown $d.Closes $.Now}}</span>
+		</div>
+		<form method="post" action="/middag/{{$d.Key}}">
+			{{template "countfields" dict "Form" .Data.Form "ID" "reg"
+	"Zero" "Ingen anmäld — spara så här för att tacka nej till den här kvällen."}}
+			<div class="form-actions">
+				<button type="submit" class="button primary">Spara anmälan</button>
+				<button type="submit" class="button ghost" name="action" value="decline"
+				        formnovalidate
+				        data-confirm="Anmäla att ni inte kommer på den här middagen?">
+					Vi kommer inte
+				</button>
+			</div>
+			<p class="hint">
+				Gäller bara den här kvällen, och sparas för <strong>{{.Ident.Name}}</strong>.
+				<a href="/jagar">Inte du?</a>
+				Vill ni vara med varje {{weekdayName $d.Weekday}}? <a href="/mina">Gör en stående anmälan.</a>
+			</p>
+		</form>
+	</section>
+	{{else if $d.Cancelled}}
+	<p class="alert alert-warn">Middagen är inställd, så det går inte att anmäla sig.</p>
+	{{else if .Data.Over}}
+	<p class="alert alert-warn">Den här middagen är serverad.</p>
+	{{else}}
+	<p class="alert alert-warn">
+		Anmälan stängde {{dateTime $d.Closes}} och matlaget har fått listan.
+		Behöver du ändå ändra — prata med
+		{{with $d.Team}}{{if .LeaderName}}{{.LeaderName}}{{else}}matlaget{{end}}{{else}}matlaget{{end}}.
+	</p>
+	{{end}}
+
+	<p class="back">
+		<a class="quiet-link" href="/">← Alla middagar</a>
+		<a class="quiet-link" href="{{.Data.ListURL}}">Matlistan för matlaget →</a>
+	</p>
+</div>
+{{end}}
+{{template "base" .}}
