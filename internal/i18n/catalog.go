@@ -344,6 +344,7 @@ var catalog = map[string]entry{
 	"admin.sent":        {"Matlistan är skickad.", "The list has been sent."},
 	"admin.sent.failed": {"Utskicket gick inte fram. Titta i loggen.", "The mail did not go out. Look in the log."},
 	"admin.nomail":      {"SMTP är inte konfigurerat, så inga matlistor mejlas ut. Utskicken skrivs bara i loggen. Sätt %s och %s för att slå på dem.", "SMTP is not configured, so no lists are mailed out. They are only written to the log. Set %s and %s to turn them on."},
+	"admin.nobaseurl":   {"Husets adress är inte satt, utan står kvar på %s. Alla länkar som lämnar sidan pekar därför hit: mejlet till matlaget, adressen ett kalkylark hämtar, och länken du ger en gäst. Sätt %s till den riktiga adressen.", "The site's own address is unset and still says %s. Every link that leaves the site therefore points here: the mail to the cooking team, the address a spreadsheet fetches, and the link you give a guest. Set %s to the real address."},
 
 	"admin.schedule.pickseason":       {"Välj säsong", "Choose a season"},
 	"admin.schedule.body":             {"Lagen turas om i den ordning de står under Matlag. Vill du byta för en enskild kväll väljer du ett annat lag här — då står den kvällen kvar oavsett hur rotationen ändras.", "The teams take turns in the order they have under Cooking teams. To swap a single evening, pick another team here — that evening then stays put however the rotation changes."},

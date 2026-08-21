@@ -202,7 +202,7 @@ Vill man slippa importera om varje vecka finns en levande länk. Matlaget och
 administratören får en färdig formel att klistra in i en cell:
 
 ```
-=IMPORTDATA("https://middag.rudbeckia.nu/middag/2026-08-25/lista.csv?nyckel=…")
+=IMPORTDATA("https://dinner.rudbeckia.nu/middag/2026-08-25/lista.csv?nyckel=…")
 ```
 
 Arket hämtar då listan självt, och siffrorna uppdaterar sig ända till anmälan

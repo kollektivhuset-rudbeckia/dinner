@@ -14,6 +14,9 @@
 {{if not .Data.MailOn}}
 <p class="alert alert-warn">{{t "admin.nomail" "SMTP_HOST" "SMTP_FROM"}}</p>
 {{end}}
+{{if .Data.BaseURLUnset}}
+<p class="alert alert-warn">{{t "admin.nobaseurl" .Data.BaseURL "BASE_URL"}}</p>
+{{end}}
 
 <nav class="tabs" aria-label="{{t "admin.parts"}}">
 	{{$tab := .Data.Tab}}

@@ -152,6 +152,12 @@ func run(log *slog.Logger) error {
 	if !guard.HasAdmin() {
 		log.Warn("ADMIN_PASSWORD is not set; the /admin view is unavailable")
 	}
+	if rt.BaseURLUnset() && !rt.Demo {
+		log.Warn("BASE_URL is not set, so every link that leaves the site points at "+
+			"this machine: the mail to the cooking team, the address a spreadsheet "+
+			"fetches, and the link you give a guest",
+			"base_url", rt.BaseURL)
+	}
 
 	srv, err := web.New(cfg, rt, st, guard, mailer, log)
 	if err != nil {

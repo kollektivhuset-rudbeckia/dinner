@@ -257,3 +257,33 @@ func clearEnv(t *testing.T) {
 		os.Unsetenv(k)
 	}
 }
+
+// Every link that leaves the site is built from BASE_URL, so a deployment that
+// never set it needs telling rather than quietly mailing out links that point
+// at the server's own machine.
+func TestBaseURLUnsetIsDetected(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("DINNER_PASSWORD", "hemligt")
+	rt, err := LoadRuntime()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rt.BaseURL != DefaultBaseURL {
+		t.Fatalf("BaseURL = %q, want the default", rt.BaseURL)
+	}
+	if !rt.BaseURLUnset() {
+		t.Error("an unset BASE_URL should be reported as such")
+	}
+
+	t.Setenv("BASE_URL", "https://dinner.rudbeckia.nu")
+	rt, _ = LoadRuntime()
+	if rt.BaseURLUnset() {
+		t.Error("a real address should not be reported as unset")
+	}
+	// A trailing slash is the same address, not a different one.
+	t.Setenv("BASE_URL", DefaultBaseURL+"/")
+	rt, _ = LoadRuntime()
+	if !rt.BaseURLUnset() {
+		t.Error("the default with a trailing slash is still the default")
+	}
+}

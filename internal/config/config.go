@@ -137,6 +137,12 @@ type Runtime struct {
 	Demo bool
 }
 
+// BaseURLUnset reports whether BASE_URL was left at its default. Every link
+// that leaves the site — the mail to the cooking team, the address a
+// spreadsheet fetches, the one to give a guest — is built from it, so this is
+// worth saying out loud rather than discovering from a dead link.
+func (r Runtime) BaseURLUnset() bool { return r.BaseURL == DefaultBaseURL }
+
 // MailSettings configures outgoing notification mail.
 type MailSettings struct {
 	Host       string

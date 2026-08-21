@@ -139,19 +139,24 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request, v *view) {
 
 	v.Title = i18n.T(v.Lang, "admin.title")
 	v.Data = map[string]any{
-		"Tab":              tab,
-		"Tabs":             tabsFor(v.Lang),
-		"Breaks":           world.Breaks,
-		"Settings":         world.Settings,
-		"Teams":            world.Teams,
-		"Seasons":          world.Seasons,
-		"Season":           shown,
-		"Rows":             rows,
-		"Standing":         standing,
-		"Weekdays":         allWeekdays(),
-		"GuestURL":         s.rt.BaseURL + "/gast",
-		"Saved":            r.URL.Query().Get("sparat"),
-		"MailOn":           s.mailer.Enabled(),
+		"Tab":      tab,
+		"Tabs":     tabsFor(v.Lang),
+		"Breaks":   world.Breaks,
+		"Settings": world.Settings,
+		"Teams":    world.Teams,
+		"Seasons":  world.Seasons,
+		"Season":   shown,
+		"Rows":     rows,
+		"Standing": standing,
+		"Weekdays": allWeekdays(),
+		"GuestURL": s.rt.BaseURL + "/gast",
+		"Saved":    r.URL.Query().Get("sparat"),
+		"MailOn":   s.mailer.Enabled(),
+		// The admin view is where the guest link and the spreadsheet formula
+		// are read off the screen, so it is the right place to say that the
+		// address in them is not the real one.
+		"BaseURLUnset":     s.rt.BaseURLUnset() && !s.rt.Demo,
+		"BaseURL":          s.rt.BaseURL,
 		"NextSeasonOffset": nextRotationOffset(world),
 	}
 	s.render(w, r, http.StatusOK, "admin.html", v)

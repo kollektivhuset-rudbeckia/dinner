@@ -16,6 +16,13 @@ const (
 	DemoAdminPassword = "admin"
 )
 
+// DefaultBaseURL is where BASE_URL lands when nobody sets it. It is fine for
+// running on your own machine and wrong for anything else: it is the address
+// that goes into the mail to the cooking team and into the formula a
+// spreadsheet fetches, so a deployment that leaves it alone hands out links
+// that point at the reader's own computer.
+const DefaultBaseURL = "http://localhost:8080"
+
 // LoadRuntime reads deployment settings from the environment. The shared
 // password is required; everything else has a usable default.
 //
@@ -28,7 +35,7 @@ func LoadRuntime() (Runtime, error) {
 		ListenAddr:    env("LISTEN_ADDR", ":8080"),
 		ConfigPath:    env("CONFIG_PATH", "config.yaml"),
 		DBPath:        env("DB_PATH", "data/dinners.db"),
-		BaseURL:       strings.TrimRight(env("BASE_URL", "http://localhost:8080"), "/"),
+		BaseURL:       strings.TrimRight(env("BASE_URL", DefaultBaseURL), "/"),
 		Password:      os.Getenv("DINNER_PASSWORD"),
 		AdminPassword: os.Getenv("ADMIN_PASSWORD"),
 		SessionMaxAge: time.Duration(envInt("SESSION_DAYS", 90)) * 24 * time.Hour,

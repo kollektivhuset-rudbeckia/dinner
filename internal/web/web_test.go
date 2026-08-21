@@ -1396,3 +1396,32 @@ func TestRegistrationIsImpossibleAfterTheDeadline(t *testing.T) {
 		t.Errorf("the registration was changed anyway: %+v", regs)
 	}
 }
+
+// The admin view is where the guest link and the spreadsheet formula are read
+// off the screen, so it has to say when the address in them is not real.
+func TestAdminWarnsWhenTheSiteAddressIsUnset(t *testing.T) {
+	h := newHarness(t)
+	c := h.client(t)
+	c.login("adm")
+	c.identify("Chef", "chef@example.se")
+
+	// The harness is configured with a real address, so no warning.
+	if body := c.get("/admin").Body.String(); strings.Contains(body, "BASE_URL") {
+		t.Error("a configured address should not be warned about")
+	}
+
+	h.rt.BaseURL = config.DefaultBaseURL
+	body := c.get("/admin").Body.String()
+	if !strings.Contains(body, "BASE_URL") {
+		t.Error("an unset address should be warned about")
+	}
+	if !strings.Contains(body, config.DefaultBaseURL) {
+		t.Error("the warning should say what the address currently is")
+	}
+
+	// The demo runs on localhost on purpose and should not nag about it.
+	h.rt.Demo = true
+	if body := c.get("/admin").Body.String(); strings.Contains(body, "BASE_URL") {
+		t.Error("the demo should not warn about its own address")
+	}
+}
