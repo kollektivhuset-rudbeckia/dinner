@@ -19,7 +19,7 @@ en säsong som redan är i gång, så att du har något att klicka på.
 **Med Docker** — det enda du behöver är Docker:
 
 ```bash
-docker run --rm -p 8080:8080 -e DEMO=true ghcr.io/o5ten/dinners:latest
+docker run --rm -p 8080:8080 -e DEMO=true ghcr.io/o5ten/dinner:latest
 ```
 
 **Med Go** — om du klonat repot:
@@ -307,7 +307,7 @@ startar demon och hämtar en sida. Den bygger också containern, så en trasig
 `Dockerfile` fastnar i pull requesten och inte i releasen.
 
 `.github/workflows/release.yml` bygger och publicerar
-`ghcr.io/o5ten/dinners` för `linux/amd64` och `linux/arm64` vid varje push
+`ghcr.io/o5ten/dinner` för `linux/amd64` och `linux/arm64` vid varje push
 till `main` och vid varje `v*`-tagg.
 
 Uppdatera med:

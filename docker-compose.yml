@@ -1,6 +1,6 @@
 services:
   dinners:
-    image: ghcr.io/o5ten/dinners:latest
+    image: ghcr.io/o5ten/dinner:latest
     container_name: dinners-rudbeckia
     restart: unless-stopped
     ports:

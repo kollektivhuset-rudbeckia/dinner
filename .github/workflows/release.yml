@@ -55,13 +55,21 @@ jobs:
           flavor: |
             latest=false
           # Rules, in order:
-          #   :latest        on the default branch, and on a stable release tag
-          #                  (pre-releases carry a hyphen and must not move it)
+          #   :latest        on main, and on a stable release tag (pre-releases
+          #                  carry a hyphen and must not move it)
           #   :main          the branch name
           #   :1.2.3, :1.2   from a v1.2.3 tag
           #   :sha-abc1234   every build, so a deploy can pin an exact commit
+          #
+          # The first rule matches the ref rather than using the action's
+          # {{is_default_branch}}. That helper asks GitHub what the default
+          # branch is, and the answer can disagree with the branch being built:
+          # the very first push here went to main while the repository still
+          # said master, so no :latest was derived and the build went green
+          # anyway. This workflow only ever runs for main and for v* tags, so
+          # naming the branch is both simpler and impossible to get wrong.
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -70,10 +78,15 @@ jobs:
 
       # Guards the rules above: :latest is easy to lose to a small edit here,
       # and the whole deploy story depends on it.
+      #
+      # The refs listed here are exactly the ones the workflow triggers on, so
+      # anything that reaches this step and is not a pre-release tag must carry
+      # a :latest. An unrecognised ref is a mismatch between the trigger and
+      # this check, and is treated as a failure rather than waved through —
+      # that silence is what hid the missing :latest the first time round.
       - name: Check that :latest was derived
         env:
           REF: ${{ github.ref }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           TAGS: ${{ steps.meta.outputs.tags }}
         run: |
           echo "Tags for $REF:"
@@ -83,11 +96,12 @@ jobs:
               echo "Pre-release tag: :latest is intentionally left alone."
               exit 0
               ;;
-            refs/tags/*|"refs/heads/$DEFAULT_BRANCH")
+            refs/heads/main|refs/tags/v*)
               ;;
             *)
-              echo "Not a release build; :latest is not expected here."
-              exit 0
+              echo "::error::$REF is built but is not a ref this check knows about."
+              echo "Add it to the tag rules and to this check, or drop it from on.push."
+              exit 1
               ;;
           esac
           if ! echo "$TAGS" | grep -q ':latest$'; then
