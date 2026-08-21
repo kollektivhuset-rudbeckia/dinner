@@ -152,6 +152,10 @@ knutna till en adress och får vara hur många som helst.
 
 Allergier och annat skrivs som fri text och hamnar på matlistan.
 
+Efter att anmälan stängt går det inte att anmäla sig eller ändra sig — varken
+som hushåll eller som gäst, och inte heller genom att gå tillbaka till sin egen
+gästlänk. Den som ändå behöver ändra får höra av sig till lagledaren.
+
 En **stående anmälan** är husets gamla permanentlista: fyll i hur ni brukar
 äta en viss veckodag, så räknas ni med varje gång utan att göra något. Den
 slås på och av under **Mina anmälningar**.
@@ -185,6 +189,29 @@ ska laga.
 
 Har mejlet kommit bort går det att skicka om från schemat i administrationen.
 Utan SMTP fungerar allt annat som vanligt; utskicket skrivs bara i loggen.
+
+### Till kalkylark
+
+Matlistan går att få ut som CSV, för matlag som håller sin planering i ett
+kalkylark. **Ladda ner CSV** på matlistan ger en enda platt tabell: en rad per
+hushåll, en rubrikrad, inga summeringsrader och inga tomrader — den går att
+importera i Google Kalkylark (*Arkiv → Importera*) eller öppna i Excel. Filen
+har byte-order mark, så å och ä kommer fram rätt även i Excel.
+
+Vill man slippa importera om varje vecka finns en levande länk. Matlaget och
+administratören får en färdig formel att klistra in i en cell:
+
+```
+=IMPORTDATA("https://middag.rudbeckia.nu/middag/2026-08-25/lista.csv?nyckel=…")
+```
+
+Arket hämtar då listan självt, och siffrorna uppdaterar sig ända till anmälan
+stänger. Länken bär samma nyckel som mejlet till lagledaren: den öppnar den
+kvällens lista utan lösenord, och ingenting annat. Därför visas den bara för
+matlaget och administratören — alla i huset kan läsa listan, men en länk som
+funkar utan inloggning är en annan sak att dela ut.
+
+Hela säsongen på en gång finns under **Administration → Schema**.
 
 ### Språk
 

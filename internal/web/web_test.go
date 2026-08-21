@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/csv"
 	"io"
 	"log/slog"
 	"net/http"
@@ -1169,4 +1170,229 @@ func mustFind(t *testing.T, h *harness, key string) dinner.Dinner {
 		t.Fatalf("no dinner on %s", key)
 	}
 	return d
+}
+
+// ------------------------------------------------------- the spreadsheet ---
+
+// The cooking team keeps its own sheet, so the list has to come out as one
+// flat table it can pull in.
+func TestTheListExportsAsASpreadsheet(t *testing.T) {
+	h := newHarness(t)
+	anna := h.client(t)
+	anna.member("Anna Andersson", "anna@example.se")
+	anna.post("/middag/"+openDay, party(2, 2, store.DietVegan, "inga nötter"))
+	bo := h.client(t)
+	bo.member("Bo Bengtsson", "bo@example.se")
+	bo.post("/middag/"+openDay, party(1, 0, store.DietFlexitarian, ""))
+
+	guest := h.client(t)
+	form := party(2, 0, store.DietOmnivore, "")
+	form.Set("date", openDay)
+	form.Set("name", "Kalle Svensson")
+	form.Set("host", "Anna Andersson")
+	if rec := guest.post("/gast", form); rec.Code != http.StatusSeeOther {
+		t.Fatalf("guest registration = %d", rec.Code)
+	}
+
+	rec := anna.get("/middag/" + openDay + "/lista.csv")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export = %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/csv") {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, "matlista-"+openDay+".csv") {
+		t.Errorf("Content-Disposition = %q", cd)
+	}
+	// Excel will not believe a CSV is UTF-8 without the byte-order mark, and
+	// every å in the house depends on it.
+	body := rec.Body.String()
+	if !strings.HasPrefix(body, "\ufeff") {
+		t.Error("the file should start with a byte-order mark")
+	}
+
+	rows, err := csv.NewReader(strings.NewReader(strings.TrimPrefix(body, "\ufeff"))).ReadAll()
+	if err != nil {
+		t.Fatalf("the export is not valid CSV: %v", err)
+	}
+	// A header and one row per household, and nothing else: no totals row and
+	// no blank lines, so a formula in the sheet can rely on the shape.
+	if len(rows) != 4 {
+		t.Fatalf("got %d rows, want a header and three households: %v", len(rows), rows)
+	}
+	width := len(rows[0])
+	for i, row := range rows {
+		if len(row) != width {
+			t.Errorf("row %d has %d columns, want %d", i, len(row), width)
+		}
+	}
+	if rows[0][0] != "datum" || rows[0][1] != "namn" {
+		t.Errorf("header = %v", rows[0])
+	}
+
+	byName := map[string][]string{}
+	for _, row := range rows[1:] {
+		byName[row[1]] = row
+	}
+	anna_ := byName["Anna Andersson"]
+	if anna_ == nil {
+		t.Fatalf("Anna is missing: %v", rows)
+	}
+	if anna_[0] != openDay || anna_[3] != "2" || anna_[4] != "2" || anna_[5] != "4" {
+		t.Errorf("Anna's row = %v", anna_)
+	}
+	if anna_[6] != "Vegan" {
+		t.Errorf("Anna's diet = %q, want the readable name", anna_[6])
+	}
+	if anna_[7] != "inga nötter" {
+		t.Errorf("Anna's note = %q", anna_[7])
+	}
+	if anna_[8] != "" {
+		t.Errorf("Anna is not a guest, got %q", anna_[8])
+	}
+
+	kalle := byName["Kalle Svensson"]
+	if kalle == nil {
+		t.Fatal("the guest is missing from the export")
+	}
+	if kalle[8] != "ja" || kalle[9] != "Anna Andersson" {
+		t.Errorf("the guest's row = %v", kalle)
+	}
+}
+
+// A household coming on its standing registration is on the list, and marked
+// so the team can see the difference.
+func TestTheExportMarksStandingAndLeavesOutWhoSaidNo(t *testing.T) {
+	h := newHarness(t)
+	anna := h.client(t)
+	anna.member("Anna", "anna@example.se")
+	anna.post("/stadigvarande", withWeekday(party(2, 0, store.DietOmnivore, ""), time.Tuesday))
+
+	bo := h.client(t)
+	bo.member("Bo", "bo@example.se")
+	bo.post("/stadigvarande", withWeekday(party(1, 0, store.DietOmnivore, ""), time.Tuesday))
+	bo.post("/middag/"+openDay, url.Values{"action": {"decline"}})
+
+	body := strings.TrimPrefix(anna.get("/middag/"+openDay+"/lista.csv").Body.String(), "\ufeff")
+	rows, err := csv.NewReader(strings.NewReader(body)).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want a header and Anna only: %v", len(rows), rows)
+	}
+	if rows[1][1] != "Anna" {
+		t.Errorf("row = %v", rows[1])
+	}
+	if rows[1][10] != "ja" {
+		t.Errorf("Anna comes on her standing registration; column = %q", rows[1][10])
+	}
+}
+
+// The export is the same capability as the list, so the mailed link opens it —
+// which is what lets a spreadsheet pull it in without logging in.
+func TestTheExportFollowsTheMailedKey(t *testing.T) {
+	h := newHarness(t)
+	path := "/middag/" + openDay + "/lista.csv"
+	stranger := h.client(t)
+
+	if rec := stranger.get(path); rec.Code != http.StatusSeeOther {
+		t.Errorf("without a key = %d, want a redirect to the login page", rec.Code)
+	}
+	key := h.guard.Key(listKeyPurpose, openDay, time.Hour)
+	if rec := stranger.get(path + "?nyckel=" + url.QueryEscape(key)); rec.Code != http.StatusOK {
+		t.Errorf("with the mailed key = %d, want 200", rec.Code)
+	}
+	// And nothing else.
+	if rec := stranger.get("/middag/" + laterDay + "/lista.csv?nyckel=" + url.QueryEscape(key)); rec.Code != http.StatusSeeOther {
+		t.Errorf("the key opened another evening's export: %d", rec.Code)
+	}
+	if rec := stranger.get(path + "?nyckel=forged"); rec.Code != http.StatusSeeOther {
+		t.Errorf("a forged key was accepted: %d", rec.Code)
+	}
+}
+
+// The list page offers the download to anybody who may read it, but the link
+// that works without a password only to the team and the administrator.
+func TestTheLiveFormulaIsOnlyOfferedToTheTeam(t *testing.T) {
+	h := newHarness(t)
+
+	member := h.client(t)
+	member.member("Anna", "anna@example.se")
+	body := member.get("/middag/" + openDay + "/lista").Body.String()
+	if !strings.Contains(body, "lista.csv") {
+		t.Error("a member should be offered the download")
+	}
+	if strings.Contains(body, "IMPORTDATA") {
+		t.Error("a member should not be handed a password-free link to share")
+	}
+
+	admin := h.client(t)
+	admin.login("adm")
+	admin.identify("Chef", "chef@example.se")
+	body = admin.get("/middag/" + openDay + "/lista").Body.String()
+	if !strings.Contains(body, "IMPORTDATA") {
+		t.Error("the administrator should get the live formula")
+	}
+	if !strings.Contains(body, "https://mat.example.se/middag/"+openDay+"/lista.csv?nyckel=") {
+		t.Error("the formula needs an absolute, keyed address")
+	}
+
+	// The leader who followed the mailed link gets it too.
+	key := h.guard.Key(listKeyPurpose, openDay, time.Hour)
+	leader := h.client(t)
+	body = leader.get("/middag/" + openDay + "/lista?nyckel=" + url.QueryEscape(key)).Body.String()
+	if !strings.Contains(body, "IMPORTDATA") {
+		t.Error("the cooking team should get the live formula")
+	}
+	// Their download link has to keep the key, or it just bounces to login.
+	if !strings.Contains(body, "lista.csv?nyckel=") {
+		t.Error("the download link should carry the reader's key")
+	}
+}
+
+// Dvir asked whether a late registration would be possible. It must not be,
+// in any of the ways somebody might try.
+func TestRegistrationIsImpossibleAfterTheDeadline(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	member := h.client(t)
+	member.member("Anna", "anna@example.se")
+	if rec := member.post("/middag/"+shutDay, party(2, 0, store.DietOmnivore, "")); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("a member registering late = %d, want 422", rec.Code)
+	}
+
+	// A guest cannot pick a closed evening, and it is not even offered.
+	guest := h.client(t)
+	if body := guest.get("/gast").Body.String(); strings.Contains(body, `value="`+shutDay+`"`) {
+		t.Error("a closed evening should not be offered on the guest page")
+	}
+	form := party(1, 0, store.DietOmnivore, "")
+	form.Set("date", shutDay)
+	form.Set("name", "Kalle")
+	if rec := guest.post("/gast", form); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("a guest registering late = %d, want 422", rec.Code)
+	}
+
+	// Nor by coming back to an existing guest registration afterwards. Make one
+	// for an open evening, then move the deadline past it.
+	form = party(1, 0, store.DietOmnivore, "")
+	form.Set("date", openDay)
+	form.Set("name", "Maja")
+	rec := guest.post("/gast", form)
+	link := strings.Split(rec.Header().Get("Location"), "?")[0]
+	if err := h.store.SaveSettings(ctx, store.Settings{
+		DeadlineWeekday: time.Friday, DeadlineMinutes: 23*60 + 59,
+		DeadlineWeeksBefore: 4, GuestOpen: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if rec := guest.post(link, party(9, 9, store.DietOmnivore, "")); rec.Code != http.StatusConflict {
+		t.Errorf("changing a guest registration after the deadline = %d, want 409", rec.Code)
+	}
+	regs, _ := h.store.Registrations(ctx, openDay)
+	if len(regs) != 1 || regs[0].Adults != 1 {
+		t.Errorf("the registration was changed anyway: %+v", regs)
+	}
 }

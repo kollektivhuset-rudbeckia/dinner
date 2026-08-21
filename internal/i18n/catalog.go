@@ -425,4 +425,28 @@ var catalog = map[string]entry{
 	"admin.standing.body":    {"Hushåll som är med varje gång utan att anmäla sig. Den som vill ändra gör det själv under Mina anmälningar.", "Households that are counted in every time without registering. Anyone who wants to change theirs does it under My registrations."},
 	"admin.standing.evening": {"Kväll", "Evening"},
 	"admin.standing.none":    {"Ingen har lagt upp en stående anmälan ännu.", "Nobody has set up a standing registration yet."},
+
+	// --- the spreadsheet export ---------------------------------------------
+	"csv.date":      {"datum", "date"},
+	"csv.name":      {"namn", "name"},
+	"csv.apartment": {"lägenhet", "apartment"},
+	"csv.adults":    {"vuxna", "adults"},
+	"csv.children":  {"barn", "children"},
+	"csv.people":    {"personer", "people"},
+	"csv.diet":      {"kosthållning", "diet"},
+	"csv.allergies": {"allergier", "allergies"},
+	"csv.guest":     {"gäst", "guest"},
+	"csv.host":      {"värd", "host"},
+	"csv.standing":  {"stående", "standing"},
+
+	"list.export":           {"Till kalkylark", "To a spreadsheet"},
+	"list.export.body":      {"Ladda ner listan som CSV och öppna den i Google Kalkylark (Arkiv → Importera) eller Excel.", "Download the list as CSV and open it in Google Sheets (File → Import) or Excel."},
+	"list.export.download":  {"Ladda ner CSV", "Download CSV"},
+	"list.export.live":      {"Vill du att arket håller sig uppdaterat av sig självt? Klistra in den här formeln i en cell i Google Kalkylark:", "Want the sheet to keep itself up to date? Paste this formula into a cell in Google Sheets:"},
+	"list.export.live.hint": {"Länken innehåller en nyckel som öppnar just den här kvällens lista utan lösenord. Dela den bara med matlaget.", "The link carries a key that opens this one evening's list without a password. Share it only with the cooking team."},
+	"list.alldinners":       {"Alla middagar", "All dinners"},
+
+	// --- bringing guests -----------------------------------------------------
+	"guest.invite":      {"Ta med gäster? De anmäler sig själva här — inget lösenord behövs:", "Bringing guests? They register themselves here — no password needed:"},
+	"guest.invite.link": {"Ta med gäster? Ge dem den här länken →", "Bringing guests? Give them this link →"},
 }

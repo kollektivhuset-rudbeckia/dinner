@@ -634,7 +634,31 @@ label { font-size: .85rem; }
 .sheet-table { margin-top: .5rem; }
 .sheet-declined { margin-top: 1rem; }
 .sheet-foot { margin: 2rem 0 0; padding-top: 1rem; border-top: 1px solid var(--line-soft); }
-.sheet-actions { display: flex; gap: .6rem; margin-top: 1.5rem; }
+.sheet-actions { display: flex; gap: .6rem; margin-top: 1.5rem; flex-wrap: wrap; }
+
+/* Getting the list into the spreadsheet the team already keeps. */
+.export {
+	margin-top: 2rem; padding: 1.25rem 1.5rem;
+	background: var(--bg-soft); border: 1px solid var(--line);
+	border-radius: var(--radius-lg);
+}
+.export .section-title { margin-top: 0; border: 0; padding: 0; }
+.export p { margin-bottom: .75rem; }
+.export p:last-child { margin-bottom: 0; }
+/* A formula is meant to be selected and copied, so let it wrap and sit still
+   rather than pushing the page sideways. */
+.formula {
+	display: block; padding: .6rem .8rem; line-height: 1.5;
+	word-break: break-all; font-size: .82rem;
+	background: var(--bg-sunk); border-radius: var(--radius-sm);
+}
+
+/* One line under the form, where you would think of it. */
+.guest-invite {
+	margin: 1.25rem 0 0; padding-top: 1rem;
+	border-top: 1px solid var(--line); font-size: .9rem; color: var(--text-muted);
+}
+.guest-invite code { word-break: break-all; }
 
 @media print {
 	.no-print { display: none !important; }

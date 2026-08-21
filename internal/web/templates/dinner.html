@@ -66,6 +66,12 @@
 				<a href="/mina">{{t "dinner.everyweek.link"}}</a>
 			</p>
 		</form>
+		{{if .GuestOpen}}
+		<p class="guest-invite">
+			{{t "guest.invite"}}
+			<code>{{.BaseURL}}/gast</code>
+		</p>
+		{{end}}
 	</section>
 	{{else if $d.Cancelled}}
 	<p class="alert alert-warn">{{t "dinner.cancelled.noreg"}}</p>

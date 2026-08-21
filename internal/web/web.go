@@ -114,6 +114,7 @@ func (s *Server) Handler() http.Handler {
 	// The printable list is reachable both by a logged-in member and by the
 	// signed link mailed to the cooking-team leader, so it does its own check.
 	mux.HandleFunc("GET /middag/{date}/lista", s.handleList)
+	mux.HandleFunc("GET /middag/{date}/lista.csv", s.handleListCSV)
 
 	mux.Handle("GET /jagar", s.member(s.handleIdentityForm))
 	mux.Handle("POST /jagar", s.member(s.handleIdentitySave))
