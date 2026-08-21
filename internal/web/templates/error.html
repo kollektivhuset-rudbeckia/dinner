@@ -2,7 +2,7 @@
 <div class="narrow">
 	<h1>{{.Data.Headline}}</h1>
 	{{with .Data.Detail}}<p class="muted">{{.}}</p>{{end}}
-	<p><a class="button" href="/">Till kommande middagar</a></p>
+	<p><a class="button" href="/">{{t "error.home"}}</a></p>
 </div>
 {{end}}
 {{template "base" .}}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/O5ten/dinners/internal/auth"
+	"github.com/O5ten/dinners/internal/i18n"
 )
 
 // loginThrottle slows down password guessing from a single address. It is a
@@ -64,7 +65,7 @@ func (s *Server) handleLoginForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := s.newView(r, role)
-	v.Title = "Logga in"
+	v.Title = i18n.T(v.Lang, "login.title")
 	v.GuestOpen = s.guestOpen(r.Context())
 	v.Data = map[string]any{"Next": r.URL.Query().Get("next")}
 	s.render(w, r, http.StatusOK, "login.html", v)
@@ -72,7 +73,8 @@ func (s *Server) handleLoginForm(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		s.renderError(w, r, http.StatusBadRequest, "Formuläret kunde inte läsas", "Försök igen.")
+		s.errorPage(w, r, http.StatusBadRequest,
+			"error.form", "error.form.detail")
 		return
 	}
 	ip := s.clientIP(r)
@@ -80,12 +82,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	next := safeNext(r.FormValue("next"))
 
 	v := s.newView(r, "")
-	v.Title = "Logga in"
+	v.Title = i18n.T(v.Lang, "login.title")
 	v.GuestOpen = s.guestOpen(r.Context())
 
 	if !throttle.allow(ip, now) {
 		v.Data = map[string]any{"Next": r.FormValue("next"),
-			"Error": "För många försök. Vänta en kvart och prova igen."}
+			"Error": i18n.T(v.Lang, "login.throttled")}
 		s.render(w, r, http.StatusTooManyRequests, "login.html", v)
 		return
 	}
@@ -94,7 +96,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !role.LoggedIn() {
 		throttle.fail(ip, now)
 		s.log.Warn("failed login", "ip", ip)
-		v.Data = map[string]any{"Next": r.FormValue("next"), "Error": "Fel lösenord."}
+		v.Data = map[string]any{"Next": r.FormValue("next"), "Error": i18n.T(v.Lang, "login.wrong")}
 		s.render(w, r, http.StatusUnauthorized, "login.html", v)
 		return
 	}
@@ -118,7 +120,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 // handleIdentityForm asks who the member is. The e-mail address is what ties
 // a registration to a household, so it is the one thing that is required.
 func (s *Server) handleIdentityForm(w http.ResponseWriter, r *http.Request, v *view) {
-	v.Title = "Vem är du?"
+	v.Title = i18n.T(v.Lang, "ident.title")
 	v.Data = map[string]any{
 		"Next":  r.URL.Query().Get("next"),
 		"Form":  v.Ident,
@@ -129,7 +131,8 @@ func (s *Server) handleIdentityForm(w http.ResponseWriter, r *http.Request, v *v
 
 func (s *Server) handleIdentitySave(w http.ResponseWriter, r *http.Request, v *view) {
 	if err := r.ParseForm(); err != nil {
-		s.renderError(w, r, http.StatusBadRequest, "Formuläret kunde inte läsas", "Försök igen.")
+		s.errorPage(w, r, http.StatusBadRequest,
+			"error.form", "error.form.detail")
 		return
 	}
 	id := auth.Identity{
@@ -140,12 +143,12 @@ func (s *Server) handleIdentitySave(w http.ResponseWriter, r *http.Request, v *v
 	var problem string
 	switch {
 	case id.Name == "":
-		problem = "Skriv ditt namn, så vet matlaget vem som kommer."
+		problem = i18n.T(v.Lang, "ident.need.name")
 	case !auth.ValidEmail(id.Email):
-		problem = "Skriv en e-postadress som fungerar, till exempel anna@example.se."
+		problem = i18n.T(v.Lang, "ident.need.email")
 	}
 	if problem != "" {
-		v.Title = "Vem är du?"
+		v.Title = i18n.T(v.Lang, "ident.title")
 		v.Data = map[string]any{"Next": r.FormValue("next"), "Form": id, "Error": problem}
 		s.render(w, r, http.StatusUnprocessableEntity, "identity.html", v)
 		return
@@ -168,4 +171,21 @@ func safeNext(next string) string {
 		return "/"
 	}
 	return next
+}
+
+// handleLanguage remembers which language to serve and returns the reader to
+// the page they were on. It is a form rather than a link so that following it
+// cannot be cached or prefetched into a change nobody asked for.
+func (s *Server) handleLanguage(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		s.errorPage(w, r, http.StatusBadRequest, "error.form", "error.form.detail")
+		return
+	}
+	lang, ok := i18n.Parse(r.FormValue("lang"))
+	if !ok {
+		s.errorPage(w, r, http.StatusBadRequest, "error.form", "error.form.detail")
+		return
+	}
+	i18n.SetCookie(w, lang, strings.HasPrefix(s.rt.BaseURL, "https://"))
+	http.Redirect(w, r, safeNext(r.FormValue("next")), http.StatusSeeOther)
 }

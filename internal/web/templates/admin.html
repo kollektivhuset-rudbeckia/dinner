@@ -1,27 +1,21 @@
 {{define "content"}}
 <div class="hero">
-	<h1>Administration</h1>
-	<p class="lede">
-		Matlag, säsong, schema och anmälningsstopp. Ändringarna slår igenom direkt
-		— schemat räknas fram ur säsongen och lagens ordning varje gång sidan visas.
-	</p>
+	<h1>{{t "admin.title"}}</h1>
+	<p class="lede">{{t "admin.lede"}}</p>
 </div>
 
 {{with .Data.Saved}}
 <p class="alert alert-ok" role="status">
-	{{if eq . "utskick"}}Matlistan är skickad.
-	{{else if eq . "utskick-misslyckades"}}Utskicket gick inte fram. Titta i loggen.
-	{{else}}Sparat.{{end}}
+	{{if eq . "utskick"}}{{t "admin.sent"}}
+	{{else if eq . "utskick-misslyckades"}}{{t "admin.sent.failed"}}
+	{{else}}{{t "admin.saved"}}{{end}}
 </p>
 {{end}}
 {{if not .Data.MailOn}}
-<p class="alert alert-warn">
-	SMTP är inte konfigurerat, så inga matlistor mejlas ut. Utskicken skrivs bara
-	i loggen. Sätt <code>SMTP_HOST</code> och <code>SMTP_FROM</code> för att slå på dem.
-</p>
+<p class="alert alert-warn">{{t "admin.nomail" "SMTP_HOST" "SMTP_FROM"}}</p>
 {{end}}
 
-<nav class="tabs" aria-label="Administrationens delar">
+<nav class="tabs" aria-label="{{t "admin.parts"}}">
 	{{$tab := .Data.Tab}}
 	{{range .Data.Tabs}}
 	<a class="tab{{if eq .ID $tab}} is-current{{end}}" href="/admin?flik={{.ID}}"
@@ -33,27 +27,23 @@
 {{/* ---------------------------------------------------------- schedule -- */}}
 <section class="panel" id="schema">
 	<div class="panel-head">
-		<h2>Schema</h2>
+		<h2>{{t "admin.tab.schedule"}}</h2>
 		<span class="muted small">
 			{{if .Data.Seasons}}
 			<form method="get" action="/admin" class="inline">
-				<select name="sasong" onchange="this.form.submit()" aria-label="Välj säsong">
+				<select name="sasong" onchange="this.form.submit()" aria-label="{{t "admin.schedule.pickseason"}}">
 					{{range .Data.Seasons}}
 					<option value="{{.ID}}" {{if and $.Data.Season (eq .ID $.Data.Season.ID)}}selected{{end}}>{{.Name}}</option>
 					{{end}}
 				</select>
-				<noscript><button type="submit" class="button small">Visa</button></noscript>
+				<noscript><button type="submit" class="button small">{{t "show"}}</button></noscript>
 			</form>
 			{{end}}
 		</span>
 	</div>
 
 	{{if .Data.Rows}}
-	<p class="muted">
-		Lagen turas om i den ordning de står under <a href="#lag">Matlag</a>. Vill
-		du byta för en enskild kväll väljer du ett annat lag här — då står den
-		kvällen kvar oavsett hur rotationen ändras.
-	</p>
+	<p class="muted">{{t "admin.schedule.body"}}</p>
 	<div class="schedule">
 		{{range .Data.Rows}}
 		{{$d := .Dinner}}
@@ -62,65 +52,65 @@
 			<input type="hidden" name="back" value="/admin?sasong={{$d.Season.ID}}#schema">
 			<div class="sched-when">
 				<strong>{{weekdayShort $d.Date}} {{dateShort $d.Date}}</strong>
-				<small class="muted">v.{{$d.Week}}</small>
+				<small class="muted">{{t "admin.schedule.week" $d.Week}}</small>
 			</div>
 			<div class="sched-team">
-				<label class="visually-hidden" for="team-{{$d.Key}}">Matlag {{dateShort $d.Date}}</label>
+				<label class="visually-hidden" for="team-{{$d.Key}}">{{t "admin.schedule.teamfor" (dateShort $d.Date)}}</label>
 				<select id="team-{{$d.Key}}" name="team_id">
-					<option value="">Enligt turordning{{with $d.Team}}{{if not $d.Assigned}} ({{.Name}}){{end}}{{end}}</option>
+					<option value="">{{t "admin.schedule.byrotation"}}{{with $d.Team}}{{if not $d.Assigned}} ({{.Name}}){{end}}{{end}}</option>
 					{{range $.Data.Teams}}
 					<option value="{{.ID}}" {{if and $d.Assigned $d.Team (eq .ID $d.Team.ID)}}selected{{end}}>{{.Name}}{{if .LeaderName}} · {{.LeaderName}}{{end}}</option>
 					{{end}}
 				</select>
 			</div>
 			<div class="sched-note">
-				<label class="visually-hidden" for="note-{{$d.Key}}">Meddelande {{dateShort $d.Date}}</label>
+				<label class="visually-hidden" for="note-{{$d.Key}}">{{t "admin.schedule.notefor" (dateShort $d.Date)}}</label>
 				<input id="note-{{$d.Key}}" name="note" type="text" maxlength="200"
-				       value="{{$d.Note}}" placeholder="Meddelande till huset, t.ex. temakväll">
+				       value="{{$d.Note}}" placeholder="{{t "admin.schedule.note.placeholder"}}">
 			</div>
 			<label class="checkbox sched-off">
 				<input type="checkbox" name="cancelled" value="1" {{if $d.Cancelled}}checked{{end}}>
-				<span>Inställd</span>
+				<span>{{t "admin.schedule.cancelled"}}</span>
 			</label>
 			<div class="sched-state">
-				<span class="chip">{{.Summary.People}} p</span>
+				<span class="chip">{{t "admin.schedule.people" .Summary.People}}</span>
 				{{if .Sent}}
-					<span class="chip chip-ok" title="Matlistan mejlades {{dateTime .SentAt}}">mejlad</span>
+					<span class="chip chip-ok" title="{{t "admin.schedule.mailed.title" (dateTime .SentAt)}}">{{t "admin.schedule.mailed"}}</span>
 				{{else if .Unmanned}}
-					<span class="chip chip-warn" title="Anmälan stängde utan att något lag var satt, så ingen fick listan">inget lag</span>
+					<span class="chip chip-warn" title="{{t "admin.schedule.noteam.title"}}">{{t "admin.schedule.noteam"}}</span>
 				{{else if .Open}}
-					<span class="chip">öppen</span>
+					<span class="chip">{{t "admin.schedule.open"}}</span>
 				{{else}}
-					<span class="chip chip-warn">ej mejlad</span>
+					<span class="chip chip-warn">{{t "admin.schedule.notmailed"}}</span>
 				{{end}}
 			</div>
 			<div class="sched-actions">
-				<button type="submit" class="button small">Spara</button>
-				<a class="button small ghost" href="/middag/{{$d.Key}}/lista">Lista</a>
+				<button type="submit" class="button small">{{t "save"}}</button>
+				<a class="button small ghost" href="/middag/{{$d.Key}}/lista">{{t "admin.schedule.list"}}</a>
 			</div>
 		</form>
 		<form method="post" action="/admin/skicka" class="sched-send">
 			<input type="hidden" name="date" value="{{$d.Key}}">
 			<input type="hidden" name="back" value="/admin?sasong={{$d.Season.ID}}#schema">
 			<button type="submit" class="link-button"
-			        data-confirm="Mejla matlistan för {{dateShort $d.Date}} till lagledaren nu?">
-				{{if .Sent}}Mejla igen{{else}}Mejla nu{{end}}
+			        data-confirm="{{t "admin.schedule.mail.confirm" (dateShort $d.Date)}}">
+				{{if .Sent}}{{t "admin.schedule.mailagain"}}{{else}}{{t "admin.schedule.mailnow"}}{{end}}
 			</button>
 		</form>
 		{{end}}
 	</div>
 	{{with .Data.Breaks}}
 	<p class="muted small">
-		Uppehåll den här perioden:
+		{{t "admin.schedule.breaks"}}
 		{{range $i, $b := .}}{{if $i}} · {{end}}<strong>{{$b.Name}}</strong> {{$b.Start}}–{{$b.End}}{{end}}.
-		Kvällarna där finns inte, och turordningen står stilla över dem.
+		{{t "admin.schedule.breaks.tail"}}
 	</p>
 	{{end}}
 	<p class="head-links">
-		<a class="quiet-link" href="/admin/export.csv{{with .Data.Season}}?fran={{.Start}}&amp;till={{.End}}{{end}}">Exportera säsongen som CSV →</a>
+		<a class="quiet-link" href="/admin/export.csv{{with .Data.Season}}?fran={{.Start}}&amp;till={{.End}}{{end}}">{{t "admin.schedule.export"}}</a>
 	</p>
 	{{else}}
-	<p class="empty">Lägg in en säsong nedan, så räknas kvällarna fram här.</p>
+	<p class="empty">{{t "admin.schedule.empty"}}</p>
 	{{end}}
 </section>
 {{end}}
@@ -129,19 +119,13 @@
 {{/* ------------------------------------------------------------- teams -- */}}
 <section class="panel" id="lag">
 	<div class="panel-head">
-		<h2>Matlag</h2>
-		<span class="muted small">{{len .Data.Teams}} lag</span>
+		<h2>{{t "admin.tab.teams"}}</h2>
+		<span class="muted small">{{t "admin.teams.count" (len .Data.Teams)}}</span>
 	</div>
-	<p class="muted">
-		Lagledarens adress är dit matlistan mejlas när anmälan stänger. Ett lag
-		som är avstängt hoppas över i turordningen.
-	</p>
+	<p class="muted">{{t "admin.teams.body"}}</p>
 
-	<h3 class="section-title">Turordning</h3>
-	<p class="muted small">
-		Dra lagen i den ordning de ska laga, eller flytta dem med pilarna.
-		Ordningen gäller från säsongens första middag.
-	</p>
+	<h3 class="section-title">{{t "admin.teams.order"}}</h3>
+	<p class="muted small">{{t "admin.teams.order.body"}}</p>
 	<form method="post" action="/admin/lag/ordning" data-order-form>
 		<input type="hidden" name="back" value="/admin?flik=lag">
 		<input type="hidden" name="order" value="{{range $i, $t := .Data.Teams}}{{if $i}},{{end}}{{$t.ID}}{{end}}" data-order-value>
@@ -153,58 +137,58 @@
 				<span class="order-name">
 					{{$t.Name}}
 					{{if $t.LeaderName}}<small class="muted">{{$t.LeaderName}}</small>{{end}}
-					{{if not $t.Active}}<span class="chip">avstängt</span>{{end}}
+					{{if not $t.Active}}<span class="chip">{{t "admin.teams.off"}}</span>{{end}}
 				</span>
 				<span class="order-moves">
 					<button type="submit" name="up" value="{{$t.ID}}" class="icon-button"
 					        {{if eq $i 0}}disabled{{end}}
-					        aria-label="Flytta {{$t.Name}} uppåt">↑</button>
+					        aria-label="{{t "admin.teams.order.up" $t.Name}}">↑</button>
 					<button type="submit" name="down" value="{{$t.ID}}" class="icon-button"
 					        {{if eq (add1 $i) (len $.Data.Teams)}}disabled{{end}}
-					        aria-label="Flytta {{$t.Name}} nedåt">↓</button>
+					        aria-label="{{t "admin.teams.order.down" $t.Name}}">↓</button>
 				</span>
 			</li>
 			{{else}}
-			<li class="empty">Inga matlag ännu.</li>
+			<li class="empty">{{t "admin.teams.none"}}</li>
 			{{end}}
 		</ol>
 		{{if .Data.Teams}}
 		<div class="form-actions">
-			<button type="submit" class="button small" data-order-save>Spara turordningen</button>
+			<button type="submit" class="button small" data-order-save>{{t "admin.teams.order.save"}}</button>
 		</div>
 		{{end}}
 	</form>
 
-	<h3 class="section-title">Lagen</h3>
+	<h3 class="section-title">{{t "admin.teams.thelist"}}</h3>
 	<div class="team-list">
 		{{range .Data.Teams}}
 		<form method="post" action="/admin/lag" class="team-row">
 			<input type="hidden" name="id" value="{{.ID}}">
 			<input type="hidden" name="back" value="/admin#lag">
-			<div class="field"><label>Lag<input name="name" type="text" value="{{.Name}}" required></label></div>
-			<div class="field"><label>Lagledare<input name="leader_name" type="text" value="{{.LeaderName}}" placeholder="Anna Andersson"></label></div>
-			<div class="field"><label>E-post<input name="leader_email" type="email" value="{{.LeaderEmail}}" placeholder="anna@example.se"></label></div>
-			<label class="checkbox"><input type="checkbox" name="active" value="1" {{if .Active}}checked{{end}}><span>Med i turordningen</span></label>
+			<div class="field"><label>{{t "admin.teams.team"}}<input name="name" type="text" value="{{.Name}}" required></label></div>
+			<div class="field"><label>{{t "admin.teams.leader"}}<input name="leader_name" type="text" value="{{.LeaderName}}" placeholder="Anna Andersson"></label></div>
+			<div class="field"><label>{{t "admin.teams.email"}}<input name="leader_email" type="email" value="{{.LeaderEmail}}" placeholder="anna@example.se"></label></div>
+			<label class="checkbox"><input type="checkbox" name="active" value="1" {{if .Active}}checked{{end}}><span>{{t "admin.teams.inrotation"}}</span></label>
 			<div class="team-actions">
-				<button type="submit" class="button small">Spara</button>
+				<button type="submit" class="button small">{{t "save"}}</button>
 				<button type="submit" class="button small ghost danger" name="action" value="delete"
-				        formnovalidate data-confirm="Ta bort {{.Name}}? Kvällar som pekar hit går tillbaka till turordningen.">Ta bort</button>
+				        formnovalidate data-confirm="{{t "admin.teams.delete.confirm" .Name}}">{{t "remove"}}</button>
 			</div>
 		</form>
 		{{else}}
-		<p class="empty">Inga matlag ännu. Lägg till det första nedan.</p>
+		<p class="empty">{{t "admin.teams.none.add"}}</p>
 		{{end}}
 	</div>
 
-	<h3 class="section-title">Nytt matlag</h3>
-	<p class="muted small">Nya lag hamnar sist i turordningen.</p>
+	<h3 class="section-title">{{t "admin.teams.new"}}</h3>
+	<p class="muted small">{{t "admin.teams.new.hint"}}</p>
 	<form method="post" action="/admin/lag" class="team-row">
 		<input type="hidden" name="back" value="/admin#lag">
-		<div class="field"><label>Lag<input name="name" type="text" required placeholder="Lag 1"></label></div>
-		<div class="field"><label>Lagledare<input name="leader_name" type="text" placeholder="Anna Andersson"></label></div>
-		<div class="field"><label>E-post<input name="leader_email" type="email" placeholder="anna@example.se"></label></div>
-		<label class="checkbox"><input type="checkbox" name="active" value="1" checked><span>Med i turordningen</span></label>
-		<div class="team-actions"><button type="submit" class="button small primary">Lägg till</button></div>
+		<div class="field"><label>{{t "admin.teams.team"}}<input name="name" type="text" required placeholder="Lag 1"></label></div>
+		<div class="field"><label>{{t "admin.teams.leader"}}<input name="leader_name" type="text" placeholder="Anna Andersson"></label></div>
+		<div class="field"><label>{{t "admin.teams.email"}}<input name="leader_email" type="email" placeholder="anna@example.se"></label></div>
+		<label class="checkbox"><input type="checkbox" name="active" value="1" checked><span>{{t "admin.teams.inrotation"}}</span></label>
+		<div class="team-actions"><button type="submit" class="button small primary">{{t "add"}}</button></div>
 	</form>
 </section>
 {{end}}
@@ -212,21 +196,18 @@
 {{if eq .Data.Tab "sasonger"}}
 {{/* ----------------------------------------------------------- seasons -- */}}
 <section class="panel" id="sasonger">
-	<div class="panel-head"><h2>Säsonger</h2></div>
-	<p class="muted">
-		En säsong är den period huset lagar mat, och vilka kvällar i veckan det
-		gäller. Utanför säsongerna finns inga middagar att anmäla sig till.
-	</p>
+	<div class="panel-head"><h2>{{t "admin.tab.seasons"}}</h2></div>
+	<p class="muted">{{t "admin.seasons.body"}}</p>
 
 	{{range .Data.Seasons}}
 	<form method="post" action="/admin/sasong" class="season-row">
 		<input type="hidden" name="id" value="{{.ID}}">
 		<input type="hidden" name="back" value="/admin#sasonger">
-		<div class="field"><label>Namn<input name="name" type="text" value="{{.Name}}" required></label></div>
-		<div class="field"><label>Från<input name="start" type="date" value="{{.Start}}" required></label></div>
-		<div class="field"><label>Till<input name="end" type="date" value="{{.End}}" required></label></div>
+		<div class="field"><label>{{t "admin.seasons.name"}}<input name="name" type="text" value="{{.Name}}" required></label></div>
+		<div class="field"><label>{{t "admin.seasons.from"}}<input name="start" type="date" value="{{.Start}}" required></label></div>
+		<div class="field"><label>{{t "admin.seasons.to"}}<input name="end" type="date" value="{{.End}}" required></label></div>
 		<fieldset class="weekdays">
-			<legend>Middagskvällar</legend>
+			<legend>{{t "admin.seasons.evenings"}}</legend>
 			{{$se := .}}
 			{{range $.Data.Weekdays}}
 			<label class="checkbox">
@@ -237,27 +218,27 @@
 			{{end}}
 		</fieldset>
 		<div class="field field-narrow">
-			<label>Startlag<input name="rotation_offset" type="number" value="{{.RotationOffset}}" min="0" max="99"></label>
-			<small class="hint">0 = första laget i listan tar säsongens första middag.</small>
+			<label>{{t "admin.seasons.firstteam"}}<input name="rotation_offset" type="number" value="{{.RotationOffset}}" min="0" max="99"></label>
+			<small class="hint">{{t "admin.seasons.firstteam.hint"}}</small>
 		</div>
 		<div class="team-actions">
 			<button type="submit" class="button small">Spara</button>
 			<button type="submit" class="button small ghost danger" name="action" value="delete"
-			        formnovalidate data-confirm="Ta bort säsongen {{.Name}}? Anmälningarna ligger kvar men blir oåtkomliga.">Ta bort</button>
+			        formnovalidate data-confirm="{{t "admin.seasons.delete.confirm" .Name}}">{{t "remove"}}</button>
 		</div>
 	</form>
 	{{else}}
-	<p class="empty">Ingen säsong inlagd.</p>
+	<p class="empty">{{t "admin.seasons.none"}}</p>
 	{{end}}
 
-	<h3 class="section-title">Ny säsong</h3>
+	<h3 class="section-title">{{t "admin.seasons.new"}}</h3>
 	<form method="post" action="/admin/sasong" class="season-row">
 		<input type="hidden" name="back" value="/admin#sasonger">
-		<div class="field"><label>Namn<input name="name" type="text" placeholder="Hösten {{.Now.Year}}" required></label></div>
-		<div class="field"><label>Från<input name="start" type="date" required></label></div>
-		<div class="field"><label>Till<input name="end" type="date" required></label></div>
+		<div class="field"><label>{{t "admin.seasons.name"}}<input name="name" type="text" placeholder="{{t "admin.seasons.placeholder" .Now.Year}}" required></label></div>
+		<div class="field"><label>{{t "admin.seasons.from"}}<input name="start" type="date" required></label></div>
+		<div class="field"><label>{{t "admin.seasons.to"}}<input name="end" type="date" required></label></div>
 		<fieldset class="weekdays">
-			<legend>Middagskvällar</legend>
+			<legend>{{t "admin.seasons.evenings"}}</legend>
 			{{range .Data.Weekdays}}
 			<label class="checkbox">
 				<input type="checkbox" name="weekdays" value="{{printf "%d" (weekdayNum .)}}"
@@ -267,10 +248,10 @@
 			{{end}}
 		</fieldset>
 		<div class="field field-narrow">
-			<label>Startlag<input name="rotation_offset" type="number" value="{{.Data.NextSeasonOffset}}" min="0" max="99"></label>
-			<small class="hint">Föreslaget så att lagen fortsätter där förra säsongen slutade.</small>
+			<label>{{t "admin.seasons.firstteam"}}<input name="rotation_offset" type="number" value="{{.Data.NextSeasonOffset}}" min="0" max="99"></label>
+			<small class="hint">{{t "admin.seasons.firstteam.suggested"}}</small>
 		</div>
-		<div class="team-actions"><button type="submit" class="button small primary">Lägg till</button></div>
+		<div class="team-actions"><button type="submit" class="button small primary">{{t "add"}}</button></div>
 	</form>
 </section>
 {{end}}
@@ -278,41 +259,36 @@
 {{if eq .Data.Tab "uppehall"}}
 {{/* ------------------------------------------------------------ breaks -- */}}
 <section class="panel" id="uppehall">
-	<div class="panel-head"><h2>Uppehåll</h2></div>
-	<p class="muted">
-		Veckor och dagar då huset inte lagar mat: skollov, röda dagar, en vecka
-		mitt i terminen. Kvällarna inne i ett uppehåll försvinner ur schemat, och
-		<strong>turordningen står stilla</strong> över dem — det lag som stod på tur
-		lagar första middagen efter uppehållet i stället för att missa sin gång.
-	</p>
+	<div class="panel-head"><h2>{{t "admin.tab.breaks"}}</h2></div>
+	<p class="muted">{{t "admin.breaks.body"}}</p>
 
 	{{range .Data.Breaks}}
 	<form method="post" action="/admin/uppehall" class="season-row">
 		<input type="hidden" name="id" value="{{.ID}}">
 		<input type="hidden" name="back" value="/admin#uppehall">
-		<div class="field"><label>Vad<input name="name" type="text" value="{{.Name}}" required></label></div>
-		<div class="field"><label>Från<input name="start" type="date" value="{{.Start}}" required></label></div>
-		<div class="field"><label>Till<input name="end" type="date" value="{{.End}}"></label></div>
+		<div class="field"><label>{{t "admin.breaks.what"}}<input name="name" type="text" value="{{.Name}}" required></label></div>
+		<div class="field"><label>{{t "admin.seasons.from"}}<input name="start" type="date" value="{{.Start}}" required></label></div>
+		<div class="field"><label>{{t "admin.seasons.to"}}<input name="end" type="date" value="{{.End}}"></label></div>
 		<div class="team-actions">
 			<button type="submit" class="button small">Spara</button>
 			<button type="submit" class="button small ghost danger" name="action" value="delete"
-			        formnovalidate data-confirm="Ta bort uppehållet {{.Name}}? Kvällarna kommer tillbaka i schemat.">Ta bort</button>
+			        formnovalidate data-confirm="{{t "admin.breaks.delete.confirm" .Name}}">{{t "remove"}}</button>
 		</div>
 	</form>
 	{{else}}
-	<p class="empty">Inga uppehåll inlagda — det lagas mat varje middagskväll hela säsongen.</p>
+	<p class="empty">{{t "admin.breaks.none"}}</p>
 	{{end}}
 
-	<h3 class="section-title">Nytt uppehåll</h3>
+	<h3 class="section-title">{{t "admin.breaks.new"}}</h3>
 	<form method="post" action="/admin/uppehall" class="season-row">
 		<input type="hidden" name="back" value="/admin#uppehall">
-		<div class="field"><label>Vad<input name="name" type="text" placeholder="Höstlov" required></label></div>
-		<div class="field"><label>Från<input name="start" type="date" required></label></div>
+		<div class="field"><label>{{t "admin.breaks.what"}}<input name="name" type="text" placeholder="{{t "admin.breaks.placeholder"}}" required></label></div>
+		<div class="field"><label>{{t "admin.seasons.from"}}<input name="start" type="date" required></label></div>
 		<div class="field">
-			<label>Till<input name="end" type="date"></label>
-			<small class="hint">Lämna tomt för en enda dag.</small>
+			<label>{{t "admin.seasons.to"}}<input name="end" type="date"></label>
+			<small class="hint">{{t "admin.breaks.single"}}</small>
 		</div>
-		<div class="team-actions"><button type="submit" class="button small primary">Lägg till</button></div>
+		<div class="team-actions"><button type="submit" class="button small primary">{{t "add"}}</button></div>
 	</form>
 </section>
 {{end}}
@@ -320,22 +296,19 @@
 {{if eq .Data.Tab "installningar"}}
 {{/* ---------------------------------------------------------- settings -- */}}
 <section class="panel" id="installningar">
-	<div class="panel-head"><h2>Inställningar</h2></div>
+	<div class="panel-head"><h2>{{t "admin.tab.settings"}}</h2></div>
 	<form method="post" action="/admin/installningar">
 		<input type="hidden" name="back" value="/admin#installningar">
-		<h3 class="section-title">Anmälningsstopp</h3>
-		<p class="muted">
-			Anmälan stänger en gång i veckan, inte per middag: matlaget handlar för
-			hela veckan på en gång. Räkna bakåt från måndagen i middagsveckan.
-		</p>
+		<h3 class="section-title">{{t "admin.settings.deadline"}}</h3>
+		<p class="muted">{{t "admin.settings.deadline.body"}}</p>
 		<div class="field-grid">
 			<div class="field">
-				<label for="dl-weeks">Antal hela veckor före middagsveckan</label>
+				<label for="dl-weeks">{{t "admin.settings.weeks"}}</label>
 				<input id="dl-weeks" name="deadline_weeks_before" type="number" min="0" max="8"
 				       value="{{.Data.Settings.DeadlineWeeksBefore}}">
 			</div>
 			<div class="field">
-				<label for="dl-wd">Veckodag</label>
+				<label for="dl-wd">{{t "admin.settings.weekday"}}</label>
 				<select id="dl-wd" name="deadline_weekday">
 					{{range .Data.Weekdays}}
 					<option value="{{printf "%d" (weekdayNum .)}}"
@@ -344,31 +317,29 @@
 				</select>
 			</div>
 			<div class="field">
-				<label for="dl-time">Klockslag</label>
+				<label for="dl-time">{{t "admin.settings.time"}}</label>
 				<input id="dl-time" name="deadline_time" type="time"
 				       value="{{clockMinutes .Data.Settings.DeadlineMinutes}}">
-				<small class="hint">23:59 betyder natten mot dagen efter.</small>
+				<small class="hint">{{t "admin.settings.time.hint"}}</small>
 			</div>
 		</div>
 		{{with .Data.Rows}}
 		{{$first := index . 0}}
 		<p class="summary">
-			Med den här inställningen stängde anmälan till
-			{{dateLong $first.Dinner.Date}} klockan {{clock $first.Dinner.Closes}} den
-			{{dateLong $first.Dinner.Closes}}.
+			{{t "admin.settings.example" (dateLong $first.Dinner.Date) (clock $first.Dinner.Closes) (dateLong $first.Dinner.Closes)}}
 		</p>
 		{{end}}
 
-		<h3 class="section-title">Gästanmälan</h3>
+		<h3 class="section-title">{{t "admin.settings.guest"}}</h3>
 		<label class="checkbox">
 			<input type="checkbox" name="guest_open" value="1" {{if .Data.Settings.GuestOpen}}checked{{end}}>
-			<span>Låt gäster anmäla sig utan lösenord</span>
+			<span>{{t "admin.settings.guest.on"}}</span>
 		</label>
 		<p class="hint">
-			Länken att ge till gäster: <code>{{.Data.GuestURL}}</code>
+			{{t "admin.settings.guest.link"}} <code>{{.Data.GuestURL}}</code>
 		</p>
 
-		<div class="form-actions"><button type="submit" class="button primary">Spara inställningar</button></div>
+		<div class="form-actions"><button type="submit" class="button primary">{{t "admin.settings.save"}}</button></div>
 	</form>
 </section>
 {{end}}
@@ -377,28 +348,27 @@
 {{/* --------------------------------------------------------- standing --- */}}
 <section class="panel" id="staende">
 	<div class="panel-head">
-		<h2>Stående anmälningar</h2>
-		<span class="muted small">{{len .Data.Standing}} st</span>
+		<h2>{{t "admin.tab.standing"}}</h2>
+		<span class="muted small">{{t "admin.standing.count" (len .Data.Standing)}}</span>
 	</div>
-	<p class="muted">
-		Hushåll som är med varje gång utan att anmäla sig. Den som vill ändra gör
-		det själv under <em>Mina anmälningar</em>.
-	</p>
+	<p class="muted">{{t "admin.standing.body"}}</p>
 	{{if .Data.Standing}}
 	<div class="table-wrap">
 		<table class="table">
 			<thead>
-				<tr><th>Namn</th><th>Lgh</th><th>Kväll</th><th class="num">Vuxna</th><th class="num">Barn</th>
-				<th class="num">Vegan</th><th class="num">Veg</th><th>Specialkost</th><th>E-post</th></tr>
+				<tr><th>{{t "list.col.name"}}</th><th>{{t "list.col.apartment"}}</th>
+				<th>{{t "admin.standing.evening"}}</th>
+				<th class="num">{{t "form.adults"}}</th><th class="num">{{t "form.children"}}</th>
+				<th>{{t "list.col.diet"}}</th><th>{{t "list.col.note"}}</th>
+				<th>{{t "admin.teams.email"}}</th></tr>
 			</thead>
 			<tbody>
 				{{range .Data.Standing}}
 				<tr>
 					<td>{{.Name}}</td><td>{{.Apartment}}</td>
-					<td>{{weekdayName .Weekday}}ar</td>
+					<td>{{weekdayPlural .Weekday}}</td>
 					<td class="num">{{.Adults}}</td><td class="num">{{.Children}}</td>
-					<td class="num">{{if .Vegans}}{{.Vegans}}{{end}}</td>
-					<td class="num">{{if .Vegetarians}}{{.Vegetarians}}{{end}}</td>
+					<td>{{dietLabel .Diet}}</td>
 					<td>{{.Note}}</td>
 					<td class="muted small">{{.Email}}</td>
 				</tr>
@@ -407,7 +377,7 @@
 		</table>
 	</div>
 	{{else}}
-	<p class="empty">Ingen har lagt upp en stående anmälan ännu.</p>
+	<p class="empty">{{t "admin.standing.none"}}</p>
 	{{end}}
 </section>
 {{end}}

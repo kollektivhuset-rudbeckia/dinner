@@ -48,9 +48,10 @@ skarpt — lösenorden står ju på sidan.
 
 Saker att prova: anmäl ditt hushåll till en kväll, slå på en **stående
 anmälan** under *Mina anmälningar* och se hur du dyker upp på alla tisdagar,
-tacka nej till en enskild kväll ändå, anmäl dig som gäst utan lösenord, öppna
-den utskriftsvänliga **matlistan**, och logga in som `admin` för att flytta
-anmälningsstoppet, byta matlag för en kväll eller lägga in ett lov.
+tacka nej till en enskild kväll ändå, anmäl dig som gäst utan lösenord, byt
+språk med flaggan uppe till höger, öppna den utskriftsvänliga **matlistan**,
+och logga in som `admin` för att flytta anmälningsstoppet, byta matlag för en
+kväll eller lägga in ett lov.
 
 ---
 
@@ -132,10 +133,24 @@ Inställningar**.
 
 ### Anmälan
 
-Ett hushåll anmäler **hur många vuxna och hur många barn** som kommer, och hur
-många av dem som äter veganskt respektive vegetariskt. Resten äter det som
-serveras. Allergier och annan specialkost skrivs som fri text och hamnar på
-matlistan.
+Ett hushåll anmäler **hur många vuxna och hur många barn** som kommer, och
+**vad de äter** — ett val för hela anmälan:
+
+| | |
+|---|---|
+| **Allätare** | äter allt |
+| **Flexitarian** | kyckling och fisk, inget rött kött |
+| **Pescetarian** | fisk och skaldjur, inget kött |
+| **Vegetarian** | inget kött eller fisk |
+| **Vegan** | inga animalier alls |
+
+Ett val per anmälan, inte per person: matlaget lagar en gryta av varje sort, och
+då är summan av valen precis antalet portioner. Äter någon i hushållet annat
+skriver man det i fältet för allergier. En gäst som är flera personer med olika
+kost gör i stället en anmälan per kosthållning — gästanmälningar är inte
+knutna till en adress och får vara hur många som helst.
+
+Allergier och annat skrivs som fri text och hamnar på matlistan.
 
 En **stående anmälan** är husets gamla permanentlista: fyll i hur ni brukar
 äta en viss veckodag, så räknas ni med varje gång utan att göra något. Den
@@ -158,9 +173,11 @@ När anmälan stänger mejlas lagledaren. **Mejlet innehåller ingen lista och i
 specialkoster** — bara en länk till matlistan. Där står allt på ett ställe,
 alltid aktuellt, och inget känsligt ligger kvar i en inkorg.
 
-Matlistan visar summorna laget lagar efter — vuxna, barn, hur många som äter
-allt, vegetariskt respektive veganskt — plus specialkosterna och vilka hushåll
-som kommer. Sidan är gjord för att skrivas ut.
+Matlistan visar summorna laget lagar efter — vuxna, barn och antalet portioner
+av varje kosthållning — plus allergierna och vilka hushåll som kommer. Alla fem
+kosthållningarna står med även när ingen valt dem, så att en gryta som inte
+behövs syns som en nolla i stället för att saknas. Sidan är gjord för att
+skrivas ut.
 
 Länken i mejlet är signerad och öppnar **den kvällens lista och inget annat**.
 Lagledaren behöver alltså inte leta rätt på husets lösenord för att se vad hen
@@ -168,6 +185,18 @@ ska laga.
 
 Har mejlet kommit bort går det att skicka om från schemat i administrationen.
 Utan SMTP fungerar allt annat som vanligt; utskicket skrivs bara i loggen.
+
+### Språk
+
+Sidan finns på svenska och engelska, och man byter med flaggan i övre högra
+hörnet — precis som man byter mellan ljust och mörkt läge. Valet sparas i en
+kaka och gäller allt: sidor, datum, veckodagar och matlistan.
+
+Har man inte valt något gissar servern på webbläsarens `Accept-Language`, och
+faller tillbaka på `site.language` i `config.yaml`.
+
+Mejlet till lagledaren följer `site.language`, inte någons webbläsare — vi vet
+ju inte vad den som öppnar mejlet har för inställningar.
 
 ### Vem som ser vad
 
@@ -214,6 +243,8 @@ site:
   tagline: Kollektivhuset Rudbeckia
   house_name: Kollektivhuset Rudbeckia
   timezone: Europe/Stockholm         # allt visas i den här tidszonen
+  language: sv                       # sv eller en: språket innan man valt,
+                                     # och språket i mejlen till matlagen
   home_url: https://rudbeckia.nu
   support_url: https://rudbeckia.nu/kontakt/
   footer_note: Kollektivhuset Rudbeckia · Rosendal, Uppsala
@@ -222,8 +253,12 @@ dinner:
   weekdays: [tisdag, torsdag]        # förval för nya säsonger
   serving_time: "18:00"
   location: stora matsalen
-  guest_info: >
-    Texten överst på den öppna gästsidan.
+  # Husets egna ord högst upp på gästsidan, i stället för de inbyggda. Sätter
+  # du den ena, sätt den andra också — annars byter sidan språk men behåller
+  # ett stycke på det gamla. Lämna båda tomma för den inbyggda texten, som
+  # redan finns på båda språken.
+  guest_info: ""
+  guest_info_en: ""
 
 deadline:                            # utgångsläge; ändras sedan i admin
   weekday: fredag
@@ -286,12 +321,19 @@ administrationen, som är vanliga länkar.
 | Paket | Ansvar |
 |---|---|
 | `internal/config` | `config.yaml` och miljövariablerna |
+| `internal/i18n` | Varje ord sidan säger, på båda språken, plus datum och räkneord |
 | `internal/auth` | Lösenordsspärren, sessioner, identiteten och de signerade länkarna |
 | `internal/store` | SQLite: lag, säsonger, uppehåll, anmälningar, utskicksloggen |
 | `internal/dinner` | Schemat, turordningen och summeringen. Rör aldrig databasen |
 | `internal/mail` | SMTP och MIME |
 | `internal/web` | Routing, sidor, mallar och utskicket |
 | `internal/setup` | Första starten och demodatan |
+
+Databasen uppgraderar sig själv vid start: `internal/store` frågar schemat hur
+det ser ut och gör bara det som fattas. Går du från en tidigare version, där
+kosthållning var två räknare per anmälan, blir en anmälan som var delvis vegansk
+eller vegetarisk den kosthållningen rakt igenom — det är ändå den maten laget
+måste laga.
 
 Datum lagras som `2006-01-02` i husets egen tidszon. En middag är en kväll, inte
 ett ögonblick, och det tar bort alla sommartidsfällor på en gång. Tidpunkter

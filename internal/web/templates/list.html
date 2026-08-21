@@ -3,66 +3,69 @@
 <div class="sheet">
 	<header class="sheet-head">
 		<div>
-			<h1>Matlista</h1>
+			<h1>{{t "list.title"}}</h1>
 			<p class="sheet-when">
-				{{titleCase (dateLongYear $d.Date)}} · vecka {{$d.Week}} ·
-				serveras {{clock $d.Serving}}{{with $.Dinner.Location}} i {{.}}{{end}}
+				{{- if $.Dinner.Location}}
+				{{- t "list.when.in" (titleCase (dateLongYear $d.Date)) $d.Week (clock $d.Serving) $.Dinner.Location}}
+				{{- else}}
+				{{- t "list.when" (titleCase (dateLongYear $d.Date)) $d.Week (clock $d.Serving)}}
+				{{- end}}
 			</p>
 		</div>
 		<img class="sheet-mark" src="/static/rudbeckia.png" alt="" width="48" height="48">
 	</header>
 
 	<p class="sheet-meta">
-		{{with $d.Team}}<strong>{{.Name}}</strong>{{if .LeaderName}} · {{.LeaderName}}{{end}}{{else}}<strong>Inget matlag utsett</strong>{{end}}
+		{{with $d.Team}}<strong>{{.Name}}</strong>{{if .LeaderName}} · {{.LeaderName}}{{end}}{{else}}<strong>{{t "list.noteam"}}</strong>{{end}}
 		<span aria-hidden="true">·</span>
 		{{if .Data.Open}}
-			Anmälan är fortfarande öppen till {{dateTime $d.Closes}} — siffrorna kan ändras.
+			{{t "list.stillopen" (dateTime $d.Closes)}}
 		{{else}}
-			Anmälan stängde {{dateTime $d.Closes}}.
+			{{t "list.closedat" (dateTime $d.Closes)}}
 		{{end}}
 	</p>
 
 	{{if $d.Cancelled}}
-	<p class="alert alert-warn">Middagen är inställd.</p>
+	<p class="alert alert-warn">{{t "list.cancelled"}}</p>
 	{{end}}
 
 	{{if .Data.Open}}
-	<p class="alert alert-warn no-print">
-		Anmälan har inte stängt ännu. Vänta med att handla tills
-		{{dateTime $d.Closes}} — det brukar komma fler.
-	</p>
+	<p class="alert alert-warn no-print">{{t "list.wait" (dateTime $d.Closes)}}</p>
 	{{end}}
 
-	<h2 class="sheet-title">Så mycket mat</h2>
+	<h2 class="sheet-title">{{t "list.howmuch"}}</h2>
 	{{template "totals" $sum}}
 	<p class="sheet-line">
-		Totalt <strong>{{people $sum.People}}</strong> från
-		{{count $sum.Households "hushåll" "hushåll"}}{{if $sum.Guests}}, varav {{$sum.Guests}} {{plural $sum.Guests "gäst" "gäster"}}{{end}}:
-		{{count $sum.Adults "vuxen" "vuxna"}} och {{count $sum.Children "barn" "barn"}}.
-		Av dem äter <strong>{{$sum.Omnivores}}</strong> allt,
-		<strong>{{$sum.Vegetarians}}</strong> vegetariskt och
-		<strong>{{$sum.Vegans}}</strong> veganskt.
+		{{t "list.total" (people $sum.People) (count "household" $sum.Households)}}
+		{{- if $sum.Guests}}{{t "list.total.guests" (count "guest" $sum.Guests)}}{{end}}:
+		{{t "list.total.split" (count "adult" $sum.Adults) (count "child" $sum.Children)}}
+		{{if $sum.People}}
+		{{t "list.portions"}}
+		{{$first := true}}
+		{{- range $sum.Diets}}{{if .People}}{{if not $first}}, {{end}}<strong>{{.People}}</strong> {{dietLabel .Diet}}{{$first = false}}{{end}}{{end}}.
+		{{end}}
 	</p>
 
-	<h2 class="sheet-title">Specialkost och allergier
-		<small>({{len $sum.Notes}} {{plural (len $sum.Notes) "anmäld" "anmälda"}})</small>
+	<h2 class="sheet-title">{{t "list.allergies"}}
+		<small>({{count "registered" (len $sum.Notes)}})</small>
 	</h2>
 	{{if $sum.Notes}}
 	<ul class="notes notes-print">
 		{{range $sum.Notes}}<li><strong>{{.Name}}</strong> — {{.Text}}</li>{{end}}
 	</ul>
 	{{else}}
-	<p class="muted">Ingen har anmält någon specialkost eller allergi.</p>
+	<p class="muted">{{t "list.allergies.none"}}</p>
 	{{end}}
 
-	<h2 class="sheet-title">Vilka kommer</h2>
+	<h2 class="sheet-title">{{t "list.who"}}</h2>
 	{{if $sum.Attendees}}
 	<table class="table sheet-table">
 		<thead>
 			<tr>
-				<th>Namn</th><th>Lgh</th><th class="num">Vuxna</th><th class="num">Barn</th>
-				<th class="num">Vegan</th><th class="num">Veg</th><th>Specialkost</th>
-				{{if $.Role.Admin}}<th class="no-print"><span class="visually-hidden">Åtgärd</span></th>{{end}}
+				<th>{{t "list.col.name"}}</th><th>{{t "list.col.apartment"}}</th>
+				<th class="num">{{t "form.adults"}}</th><th class="num">{{t "form.children"}}</th>
+				<th>{{t "list.col.diet"}}</th><th>{{t "list.col.note"}}</th>
+				{{if $.Role.Admin}}<th class="no-print"><span class="visually-hidden">{{t "list.col.action"}}</span></th>{{end}}
 			</tr>
 		</thead>
 		<tbody>
@@ -70,14 +73,13 @@
 			<tr>
 				<td>
 					{{.Name}}
-					{{if .Guest}}<small class="muted">gäst{{if .Host}} hos {{.Host}}{{end}}</small>{{end}}
-					{{if .Standing}}<small class="muted">stående anmälan</small>{{end}}
+					{{if .Guest}}<small class="muted">{{if .Host}}{{t "attendee.guest.of" .Host}}{{else}}{{t "attendee.guest"}}{{end}}</small>{{end}}
+					{{if .Standing}}<small class="muted">{{t "list.standing"}}</small>{{end}}
 				</td>
 				<td>{{.Apartment}}</td>
 				<td class="num">{{if .Adults}}{{.Adults}}{{end}}</td>
 				<td class="num">{{if .Children}}{{.Children}}{{end}}</td>
-				<td class="num">{{if .Vegans}}{{.Vegans}}{{end}}</td>
-				<td class="num">{{if .Vegetarians}}{{.Vegetarians}}{{end}}</td>
+				<td>{{dietLabel .Diet}}</td>
 				<td>{{.Note}}</td>
 				{{if $.Role.Admin}}
 				<td class="no-print">
@@ -86,7 +88,7 @@
 						<input type="hidden" name="id" value="{{.ID}}">
 						<input type="hidden" name="back" value="/admin?flik=schema">
 						<button type="submit" class="link-button danger-text"
-						        data-confirm="Ta bort anmälan för {{.Name}}?">Ta bort</button>
+						        data-confirm="{{t "list.remove.confirm" .Name}}">{{t "remove"}}</button>
 					</form>
 					{{end}}
 				</td>
@@ -96,31 +98,32 @@
 		</tbody>
 		<tfoot>
 			<tr>
-				<th>Summa</th><th></th>
+				<th>{{t "list.sum"}}</th><th></th>
 				<th class="num">{{$sum.Adults}}</th><th class="num">{{$sum.Children}}</th>
-				<th class="num">{{$sum.Vegans}}</th><th class="num">{{$sum.Vegetarians}}</th>
-				<th></th>{{if .Role.Admin}}<th class="no-print"></th>{{end}}
+				<th></th><th></th>{{if .Role.Admin}}<th class="no-print"></th>{{end}}
 			</tr>
 		</tfoot>
 	</table>
 	{{else}}
-	<p class="empty">Ingen har anmält sig.</p>
+	<p class="empty">{{t "list.nobody"}}</p>
 	{{end}}
 
 	{{if $sum.Declined}}
 	<p class="sheet-declined muted small">
-		Har tackat nej: {{range $i, $a := $sum.Declined}}{{if $i}}, {{end}}{{$a.Name}}{{end}}
+		{{$names := ""}}
+		{{- range $i, $a := $sum.Declined}}{{if $i}}{{$names = printf "%s, %s" $names $a.Name}}{{else}}{{$names = $a.Name}}{{end}}{{end}}
+		{{- t "list.declined" $names}}
 	</p>
 	{{end}}
 
 	<footer class="sheet-foot muted small">
-		{{.Site.HouseName}} · utskriven {{dateTime .Now}}
+		{{.Site.HouseName}} · {{t "list.printed" (dateTime .Now)}}
 	</footer>
 </div>
 
 <div class="sheet-actions no-print">
-	<button type="button" class="button primary" data-print>Skriv ut</button>
-	{{if not .Bare}}<a class="button ghost" href="/middag/{{$d.Key}}">Tillbaka till middagen</a>{{end}}
+	<button type="button" class="button primary" data-print>{{t "list.print"}}</button>
+	{{if not .Bare}}<a class="button ghost" href="/middag/{{$d.Key}}">{{t "list.back"}}</a>{{end}}
 </div>
 {{end}}
 {{template "base" .}}

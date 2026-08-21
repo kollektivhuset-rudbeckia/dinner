@@ -22,9 +22,12 @@ dinner:
   weekdays: [tisdag, torsdag]
   serving_time: "18:00"
   location: stora matsalen
-  guest_info: >
-    Ska du äta middag hos oss i Kollektivhuset Rudbeckia? Fyll i vem du är och
-    hur många ni blir, så vet matlaget hur mycket mat som ska lagas.
+  # Husets egna ord högst upp på gästsidan, i stället för de inbyggda. Sätter
+  # du den ena, sätt den andra också — en sida som byter till engelska och
+  # behåller ett svenskt stycke ser trasig ut. Lämna båda tomma för den
+  # inbyggda texten, som redan finns på båda språken.
+  guest_info: ""
+  guest_info_en: ""
 
 # När anmälan stänger. Stoppet är veckovis, inte per middag: matlaget handlar
 # för hela veckan på en gång.

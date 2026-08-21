@@ -15,6 +15,7 @@ import (
 
 	"github.com/O5ten/dinners/internal/auth"
 	"github.com/O5ten/dinners/internal/config"
+	"github.com/O5ten/dinners/internal/dinner"
 	"github.com/O5ten/dinners/internal/mail"
 	"github.com/O5ten/dinners/internal/store"
 )
@@ -168,11 +169,12 @@ func (c *client) member(name, email string) {
 	c.identify(name, email)
 }
 
-func counts(adults, children, vegans, vegetarians int, note string) url.Values {
+// party is the shared part of every registration form: how many people, what
+// they eat, and anything the cooking team should know.
+func party(adults, children int, diet store.Diet, note string) url.Values {
 	return url.Values{
 		"adults": {itoa(adults)}, "children": {itoa(children)},
-		"vegans": {itoa(vegans)}, "vegetarians": {itoa(vegetarians)},
-		"note": {note},
+		"diet": {string(diet)}, "note": {note},
 	}
 }
 
@@ -251,7 +253,7 @@ func TestRegisterForOneDinner(t *testing.T) {
 	c := h.client(t)
 	c.member("Anna Andersson", "anna@example.se")
 
-	rec := c.post("/middag/"+openDay, counts(2, 1, 0, 1, "glutenfritt för ett barn"))
+	rec := c.post("/middag/"+openDay, party(2, 1, store.DietVegetarian, "glutenfritt för ett barn"))
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("register = %d — %s", rec.Code, rec.Body.String())
 	}
@@ -260,7 +262,7 @@ func TestRegisterForOneDinner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stored registration: %v", err)
 	}
-	if got.Adults != 2 || got.Children != 1 || got.Vegetarians != 1 {
+	if got.Adults != 2 || got.Children != 1 || got.Diet != store.DietVegetarian {
 		t.Errorf("stored %+v", got)
 	}
 	if got.Name != "Anna Andersson" {
@@ -278,7 +280,7 @@ func TestRegistrationIsRefusedAfterTheDeadline(t *testing.T) {
 	c := h.client(t)
 	c.member("Anna", "anna@example.se")
 
-	rec := c.post("/middag/"+shutDay, counts(2, 0, 0, 0, ""))
+	rec := c.post("/middag/"+shutDay, party(2, 0, store.DietOmnivore, ""))
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("late registration = %d, want 422", rec.Code)
 	}
@@ -290,7 +292,7 @@ func TestRegistrationIsRefusedAfterTheDeadline(t *testing.T) {
 	}
 }
 
-func TestImpossibleNumbersAreRefused(t *testing.T) {
+func TestImpossibleRegistrationsAreRefused(t *testing.T) {
 	h := newHarness(t)
 	c := h.client(t)
 	c.member("Anna", "anna@example.se")
@@ -299,15 +301,25 @@ func TestImpossibleNumbersAreRefused(t *testing.T) {
 		name string
 		form url.Values
 	}{
-		{"more vegans than people", counts(1, 0, 5, 0, "")},
-		{"negative", url.Values{"adults": {"-3"}, "children": {"0"}, "vegans": {"0"}, "vegetarians": {"0"}}},
-		{"absurdly many", url.Values{"adults": {"400"}, "children": {"0"}, "vegans": {"0"}, "vegetarians": {"0"}}},
+		{"negative", url.Values{"adults": {"-3"}, "children": {"0"}, "diet": {"allatare"}}},
+		{"absurdly many", url.Values{"adults": {"400"}, "children": {"0"}, "diet": {"allatare"}}},
+		// Refused rather than quietly served the unrestricted meal, which is
+		// the one silent mistake here that matters.
+		{"a diet nobody offers", url.Values{"adults": {"2"}, "diet": {"makrobiotisk"}}},
+		{"no diet at all", url.Values{"adults": {"2"}}},
+		{"a note longer than the field allows", url.Values{
+			"adults": {"1"}, "diet": {"allatare"},
+			"note": {strings.Repeat("ä", 301)},
+		}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := c.post("/middag/"+openDay, tc.form)
 			if rec.Code != http.StatusUnprocessableEntity {
 				t.Errorf("= %d, want 422", rec.Code)
+			}
+			if _, err := h.store.MemberRegistration(context.Background(), openDay, "anna@example.se"); err == nil {
+				t.Error("nothing should have been stored")
 			}
 		})
 	}
@@ -320,7 +332,7 @@ func TestStandingRegistrationCountsYouInAutomatically(t *testing.T) {
 	c := h.client(t)
 	c.member("Anna Andersson", "anna@example.se")
 
-	rec := c.post("/stadigvarande", withWeekday(counts(2, 2, 0, 0, "nötallergi"), time.Tuesday))
+	rec := c.post("/stadigvarande", withWeekday(party(2, 2, store.DietOmnivore, "nötallergi"), time.Tuesday))
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("save standing = %d — %s", rec.Code, rec.Body.String())
 	}
@@ -347,7 +359,7 @@ func TestSkippingOneEveningBeatsTheStandingRegistration(t *testing.T) {
 	h := newHarness(t)
 	c := h.client(t)
 	c.member("Anna", "anna@example.se")
-	c.post("/stadigvarande", withWeekday(counts(2, 0, 0, 0, ""), time.Tuesday))
+	c.post("/stadigvarande", withWeekday(party(2, 0, store.DietOmnivore, ""), time.Tuesday))
 
 	rec := c.post("/middag/"+openDay, url.Values{"action": {"decline"}})
 	if rec.Code != http.StatusSeeOther {
@@ -372,7 +384,7 @@ func TestRemovingTheStandingRegistration(t *testing.T) {
 	h := newHarness(t)
 	c := h.client(t)
 	c.member("Anna", "anna@example.se")
-	c.post("/stadigvarande", withWeekday(counts(2, 0, 0, 0, ""), time.Tuesday))
+	c.post("/stadigvarande", withWeekday(party(2, 0, store.DietOmnivore, ""), time.Tuesday))
 
 	if list, _ := h.store.StandingByEmail(context.Background(), "anna@example.se"); len(list) != 1 {
 		t.Fatal("standing registration was not saved")
@@ -399,7 +411,7 @@ func TestOtherMembersNeverSeeYourAddress(t *testing.T) {
 	h := newHarness(t)
 	anna := h.client(t)
 	anna.member("Anna Andersson", "anna@example.se")
-	anna.post("/middag/"+openDay, counts(2, 0, 0, 0, ""))
+	anna.post("/middag/"+openDay, party(2, 0, store.DietOmnivore, ""))
 
 	bo := h.client(t)
 	bo.member("Bo Bengtsson", "bo@example.se")
@@ -450,10 +462,10 @@ func TestListShowsTheAggregatesTheCookingTeamNeeds(t *testing.T) {
 	h := newHarness(t)
 	anna := h.client(t)
 	anna.member("Anna", "anna@example.se")
-	anna.post("/middag/"+openDay, counts(2, 2, 0, 1, "glutenfritt"))
+	anna.post("/middag/"+openDay, party(2, 2, store.DietVegetarian, "glutenfritt"))
 	bo := h.client(t)
 	bo.member("Bo", "bo@example.se")
-	bo.post("/middag/"+openDay, counts(1, 0, 1, 0, ""))
+	bo.post("/middag/"+openDay, party(1, 0, store.DietVegan, ""))
 
 	body := anna.get("/middag/" + openDay + "/lista").Body.String()
 	for _, want := range []string{"Matlista", "glutenfritt", "Anna", "Bo"} {
@@ -461,7 +473,7 @@ func TestListShowsTheAggregatesTheCookingTeamNeeds(t *testing.T) {
 			t.Errorf("the list is missing %q", want)
 		}
 	}
-	// Five people: three adults, two children, one vegan, one vegetarian.
+	// Five people across two households.
 	if !strings.Contains(body, "5 personer") {
 		t.Error("the total is missing from the list")
 	}
@@ -476,7 +488,7 @@ func TestGuestRegistersWithoutAPassword(t *testing.T) {
 	if rec := c.get("/gast"); rec.Code != http.StatusOK {
 		t.Fatalf("the guest page needs no password, got %d", rec.Code)
 	}
-	form := counts(2, 0, 1, 0, "vegan")
+	form := party(2, 0, store.DietVegan, "vegan")
 	form.Set("date", openDay)
 	form.Set("name", "Kalle Svensson")
 	form.Set("host", "Anna Andersson")
@@ -510,7 +522,7 @@ func TestGuestRegistersWithoutAPassword(t *testing.T) {
 func TestGuestCannotRegisterForAClosedDinner(t *testing.T) {
 	h := newHarness(t)
 	c := h.client(t)
-	form := counts(1, 0, 0, 0, "")
+	form := party(1, 0, store.DietOmnivore, "")
 	form.Set("date", shutDay)
 	form.Set("name", "Kalle")
 	if rec := c.post("/gast", form); rec.Code != http.StatusUnprocessableEntity {
@@ -530,7 +542,7 @@ func TestGuestPageCanBeTurnedOff(t *testing.T) {
 	if rec := c.get("/gast"); rec.Code != http.StatusNotFound {
 		t.Errorf("GET /gast = %d, want 404 when guests are turned off", rec.Code)
 	}
-	form := counts(1, 0, 0, 0, "")
+	form := party(1, 0, store.DietOmnivore, "")
 	form.Set("date", openDay)
 	form.Set("name", "Kalle")
 	if rec := c.post("/gast", form); rec.Code != http.StatusNotFound {
@@ -544,7 +556,7 @@ func TestGuestPageShowsNobodyElse(t *testing.T) {
 	h := newHarness(t)
 	anna := h.client(t)
 	anna.member("Zäta Zettergren", "zeta@example.se")
-	anna.post("/middag/"+openDay, counts(2, 0, 0, 0, "kikärtsallergi"))
+	anna.post("/middag/"+openDay, party(2, 0, store.DietOmnivore, "kikärtsallergi"))
 
 	body := h.client(t).get("/gast").Body.String()
 	for _, secret := range []string{"Zäta Zettergren", "zeta@example.se", "kikärtsallergi"} {
@@ -628,7 +640,7 @@ func TestAdminCancelsAnEveningAndSwapsATeam(t *testing.T) {
 	// Nobody can register for a cancelled evening.
 	member := h.client(t)
 	member.member("Anna", "anna@example.se")
-	if rec := member.post("/middag/"+openDay, counts(2, 0, 0, 0, "")); rec.Code != http.StatusUnprocessableEntity {
+	if rec := member.post("/middag/"+openDay, party(2, 0, store.DietOmnivore, "")); rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("registering for a cancelled dinner = %d, want 422", rec.Code)
 	}
 
@@ -683,7 +695,7 @@ func TestAdminCSVExport(t *testing.T) {
 	h := newHarness(t)
 	anna := h.client(t)
 	anna.member("Anna Andersson", "anna@example.se")
-	anna.post("/middag/"+openDay, counts(2, 1, 0, 1, "glutenfritt"))
+	anna.post("/middag/"+openDay, party(2, 1, store.DietVegetarian, "glutenfritt"))
 
 	c := h.client(t)
 	c.login("adm")
@@ -756,7 +768,7 @@ func TestTheMailedLinkOpensTheListAndCarriesNoNames(t *testing.T) {
 	h := newHarness(t)
 	anna := h.client(t)
 	anna.member("Anna Andersson", "anna@example.se")
-	anna.post("/middag/"+openDay, counts(2, 0, 0, 1, "glutenfritt"))
+	anna.post("/middag/"+openDay, party(2, 0, store.DietVegetarian, "glutenfritt"))
 
 	world, _ := h.world(context.Background())
 	d, ok := world.Schedule.Find(openDay)
@@ -893,7 +905,7 @@ func TestAdminRemovesARegistrationFromTheList(t *testing.T) {
 	ctx := context.Background()
 
 	guest := h.client(t)
-	form := counts(9, 0, 0, 0, "")
+	form := party(9, 0, store.DietOmnivore, "")
 	form.Set("date", openDay)
 	form.Set("name", "Skräppost Skräppostsson")
 	if rec := guest.post("/gast", form); rec.Code != http.StatusSeeOther {
@@ -1067,4 +1079,94 @@ func TestANewTeamJoinsLast(t *testing.T) {
 	if len(teams) != 3 || teams[2].Name != "Lag 3" {
 		t.Errorf("teams = %+v", teams)
 	}
+}
+
+// One diet covers a whole registration. A guest party that eats two different
+// meals registers twice, which is what the form tells them to do.
+func TestAGuestPartyWithTwoDietsRegistersTwice(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	c := h.client(t)
+
+	for _, one := range []struct {
+		name string
+		diet store.Diet
+		n    int
+	}{
+		{"Kalle Svensson", store.DietOmnivore, 2},
+		{"Maja Öberg", store.DietVegan, 1},
+	} {
+		form := party(one.n, 0, one.diet, "")
+		form.Set("date", openDay)
+		form.Set("name", one.name)
+		form.Set("host", "Anna Andersson")
+		if rec := c.post("/gast", form); rec.Code != http.StatusSeeOther {
+			t.Fatalf("%s: %d", one.name, rec.Code)
+		}
+	}
+
+	regs, _ := h.store.Registrations(ctx, openDay)
+	if len(regs) != 2 {
+		t.Fatalf("got %d registrations, want 2", len(regs))
+	}
+
+	sum, err := h.summary(ctx, mustFind(t, h, openDay))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.People != 3 {
+		t.Errorf("People = %d, want 3", sum.People)
+	}
+	if got := sum.Count(store.DietOmnivore); got != 2 {
+		t.Errorf("omnivore portions = %d, want 2", got)
+	}
+	if got := sum.Count(store.DietVegan); got != 1 {
+		t.Errorf("vegan portions = %d, want 1", got)
+	}
+
+	// And both meals are named on the cooking team's list.
+	member := h.client(t)
+	member.member("Anna", "anna@example.se")
+	body := member.get("/middag/" + openDay + "/lista").Body.String()
+	for _, want := range []string{"Allätare", "Vegan", "Kalle Svensson", "Maja Öberg"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the matlista is missing %q", want)
+		}
+	}
+}
+
+// A household changing its mind edits one registration rather than adding one.
+func TestAHouseholdHasOneDietPerDinner(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	c := h.client(t)
+	c.member("Anna", "anna@example.se")
+
+	c.post("/middag/"+openDay, party(2, 1, store.DietOmnivore, ""))
+	c.post("/middag/"+openDay, party(2, 1, store.DietVegetarian, ""))
+
+	regs, _ := h.store.Registrations(ctx, openDay)
+	if len(regs) != 1 {
+		t.Fatalf("got %d registrations, want 1", len(regs))
+	}
+	if regs[0].Diet != store.DietVegetarian {
+		t.Errorf("Diet = %q, want the second answer", regs[0].Diet)
+	}
+	sum, _ := h.summary(ctx, mustFind(t, h, openDay))
+	if sum.Count(store.DietOmnivore) != 0 || sum.Count(store.DietVegetarian) != 3 {
+		t.Errorf("portions: %+v", sum.Diets)
+	}
+}
+
+func mustFind(t *testing.T, h *harness, key string) dinner.Dinner {
+	t.Helper()
+	world, err := h.world(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, ok := world.Schedule.Find(key)
+	if !ok {
+		t.Fatalf("no dinner on %s", key)
+	}
+	return d
 }

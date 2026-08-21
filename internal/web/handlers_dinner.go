@@ -10,6 +10,7 @@ import (
 
 	"github.com/O5ten/dinners/internal/auth"
 	"github.com/O5ten/dinners/internal/dinner"
+	"github.com/O5ten/dinners/internal/i18n"
 	"github.com/O5ten/dinners/internal/store"
 )
 
@@ -175,8 +176,8 @@ func (s *Server) handleDinner(w http.ResponseWriter, r *http.Request, v *view) {
 
 	d, ok := world.Schedule.Find(r.PathValue("date"))
 	if !ok {
-		s.renderError(w, r, http.StatusNotFound, "Ingen middag den dagen",
-			"Kontrollera datumet, eller gå tillbaka till listan över kommande middagar.")
+		s.errorPage(w, r, http.StatusNotFound,
+			"error.nodinner", "error.nodinner.detail")
 		return
 	}
 	sum, err := s.summary(ctx, d)
@@ -192,11 +193,10 @@ func (s *Server) handleDinner(w http.ResponseWriter, r *http.Request, v *view) {
 // regForm is the registration form's fields, kept as typed values so a
 // rejected submission can be shown back with what the member wrote.
 type regForm struct {
-	Adults      int
-	Children    int
-	Vegans      int
-	Vegetarians int
-	Note        string
+	Adults   int
+	Children int
+	Diet     store.Diet
+	Note     string
 	// Answered marks a household that has registered for this evening, as
 	// opposed to seeing its standing registration pre-filled.
 	Answered bool
@@ -210,8 +210,7 @@ type regForm struct {
 func (s *Server) formFor(ctx context.Context, d dinner.Dinner, id auth.Identity) regForm {
 	if reg, err := s.store.MemberRegistration(ctx, d.Key, id.Email); err == nil {
 		return regForm{
-			Adults: reg.Adults, Children: reg.Children,
-			Vegans: reg.Vegans, Vegetarians: reg.Vegetarians,
+			Adults: reg.Adults, Children: reg.Children, Diet: reg.Diet,
 			Note: reg.Note, Answered: true,
 		}
 	} else if !errors.Is(err, store.ErrNotFound) {
@@ -221,20 +220,19 @@ func (s *Server) formFor(ctx context.Context, d dinner.Dinner, id auth.Identity)
 		for _, st := range list {
 			if st.Weekday == d.Weekday() {
 				return regForm{
-					Adults: st.Adults, Children: st.Children,
-					Vegans: st.Vegans, Vegetarians: st.Vegetarians,
+					Adults: st.Adults, Children: st.Children, Diet: st.Diet,
 					Note: st.Note, FromStanding: true,
 				}
 			}
 		}
 	}
-	return regForm{Adults: 1}
+	return regForm{Adults: 1, Diet: store.DietOmnivore}
 }
 
 func (s *Server) renderDinner(w http.ResponseWriter, r *http.Request, v *view,
 	world *world, d dinner.Dinner, sum dinner.Summary, form regForm, problem string, status int) {
 
-	v.Title = TitleCase(DateLong(d.Date))
+	v.Title = i18n.TitleCase(i18n.DateLong(v.Lang, d.Date))
 	v.Data = map[string]any{
 		"Dinner":  d,
 		"Summary": sum,
@@ -259,11 +257,13 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request, v *view)
 	}
 	d, ok := world.Schedule.Find(r.PathValue("date"))
 	if !ok {
-		s.renderError(w, r, http.StatusNotFound, "Ingen middag den dagen", "Kontrollera datumet.")
+		s.errorPage(w, r, http.StatusNotFound,
+			"error.nodinner", "error.nodinner.check")
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		s.renderError(w, r, http.StatusBadRequest, "Formuläret kunde inte läsas", "Försök igen.")
+		s.errorPage(w, r, http.StatusBadRequest,
+			"error.form", "error.form.detail")
 		return
 	}
 
@@ -273,7 +273,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request, v *view)
 	// overrides the household's standing registration for this evening only.
 	declined := r.FormValue("action") == "decline"
 	if declined {
-		form = regForm{Answered: true}
+		form = regForm{Answered: true, Diet: store.DietOmnivore}
 	}
 
 	reject := func(problem string) {
@@ -287,13 +287,13 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request, v *view)
 
 	if !d.Open(v.Now) {
 		if d.Cancelled {
-			reject("Den här middagen är inställd.")
+			reject(i18n.T(v.Lang, "register.cancelled"))
 		} else {
-			reject("Anmälan för den här middagen stängde " + DateTime(d.Closes) + ". Prata med matlaget om du behöver ändra.")
+			reject(i18n.T(v.Lang, "register.closed", i18n.DateTime(v.Lang, d.Closes)))
 		}
 		return
 	}
-	if problem := validateCounts(form); problem != "" {
+	if problem := validateParty(v.Lang, form); problem != "" {
 		reject(problem)
 		return
 	}
@@ -306,8 +306,9 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request, v *view)
 		Email:     v.Ident.Email,
 		Name:      v.Ident.Name,
 		Apartment: v.Ident.Apartment,
-		Adults:    form.Adults, Children: form.Children,
-		Vegans: form.Vegans, Vegetarians: form.Vegetarians,
+		Adults:    form.Adults,
+		Children:  form.Children,
+		Diet:      form.Diet,
 		Note:      form.Note,
 		Token:     auth.Token(),
 		CreatedAt: now, UpdatedAt: now,
@@ -322,14 +323,18 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request, v *view)
 	http.Redirect(w, r, "/middag/"+d.Key+"?sparat=1", http.StatusSeeOther)
 }
 
-// readForm reads the shared count fields off a submitted form.
+// readForm reads the shared count and diet fields off a submitted form.
+//
+// The diet is kept exactly as submitted rather than coerced to a known value,
+// so validation can refuse it. Quietly turning something unrecognised into the
+// unrestricted meal would record a vegan as eating everything, which is the
+// one mistake here with real consequences.
 func readForm(r *http.Request) regForm {
 	return regForm{
-		Adults:      formInt(r, "adults"),
-		Children:    formInt(r, "children"),
-		Vegans:      formInt(r, "vegans"),
-		Vegetarians: formInt(r, "vegetarians"),
-		Note:        strings.TrimSpace(r.FormValue("note")),
+		Adults:   formInt(r, "adults"),
+		Children: formInt(r, "children"),
+		Diet:     store.Diet(strings.TrimSpace(r.FormValue("diet"))),
+		Note:     strings.TrimSpace(r.FormValue("note")),
 	}
 }
 
@@ -340,17 +345,18 @@ const maxPeople = 20
 // maxNote bounds the free-text restriction, which is printed on the list.
 const maxNote = 300
 
-func validateCounts(f regForm) string {
+// validateParty checks the numbers and the diet, and returns the complaint in
+// the reader's language, or an empty string when all is well.
+func validateParty(lang i18n.Lang, f regForm) string {
 	switch {
-	case f.Adults < 0 || f.Children < 0 || f.Vegans < 0 || f.Vegetarians < 0:
-		return "Antalet kan inte vara negativt."
+	case f.Adults < 0 || f.Children < 0:
+		return i18n.T(lang, "register.negative")
 	case f.Adults > maxPeople || f.Children > maxPeople:
-		return "Så många får inte plats. Hör av dig till matlaget om ni verkligen är fler än " +
-			strconv.Itoa(maxPeople) + "."
-	case f.Vegans+f.Vegetarians > f.Adults+f.Children:
-		return "Det kan inte vara fler veganer och vegetarianer än ni är personer."
+		return i18n.T(lang, "register.toomany", maxPeople)
+	case !f.Diet.Valid():
+		return i18n.T(lang, "register.nodiet")
 	case len([]rune(f.Note)) > maxNote:
-		return "Håll specialkosten kortare än " + strconv.Itoa(maxNote) + " tecken."
+		return i18n.T(lang, "register.longnote", maxNote)
 	}
 	return ""
 }

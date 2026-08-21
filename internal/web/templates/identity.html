@@ -1,33 +1,26 @@
 {{define "content"}}
 <div class="auth">
 	<div class="auth-card">
-		<h1>Vem är du?</h1>
-		<p class="muted">
-			Din e-postadress är det som knyter anmälan till ditt hushåll, så att du
-			kan ändra dig senare. Den syns bara för dig och för matgruppen — aldrig
-			för andra i huset.
-		</p>
+		<h1>{{t "ident.title"}}</h1>
+		<p class="muted">{{t "ident.lede"}}</p>
 		{{with .Data.Error}}<p class="alert alert-error" role="alert">{{.}}</p>{{end}}
 		<form method="post" action="/jagar" class="stack">
 			<input type="hidden" name="next" value="{{.Data.Next}}">
-			<label for="name">Namn</label>
+			<label for="name">{{t "ident.name"}}</label>
 			<input id="name" name="name" type="text" required autocomplete="name"
 			       autofocus value="{{.Data.Form.Name}}" placeholder="Anna Andersson">
-			<label for="apartment">Lägenhet <small class="muted">frivilligt</small></label>
+			<label for="apartment">{{t "ident.apartment"}} <small class="muted">{{t "optional"}}</small></label>
 			<input id="apartment" name="apartment" type="text" autocomplete="off"
 			       value="{{.Data.Form.Apartment}}" placeholder="1403">
-			<label for="email">E-post</label>
+			<label for="email">{{t "ident.email"}}</label>
 			<input id="email" name="email" type="email" required autocomplete="email"
 			       value="{{.Data.Form.Email}}" placeholder="anna@example.se">
-			<button type="submit" class="button primary">Fortsätt</button>
+			<button type="submit" class="button primary">{{t "ident.submit"}}</button>
 		</form>
 		{{if .Data.Known}}
-		<p class="muted small">
-			Du är inloggad som <strong>{{.Ident.Name}}</strong>. Sitter du vid en
-			delad dator?
-		</p>
-		<form method="post" action="/glom-mig" data-confirm="Glömma dina uppgifter och logga ut?">
-			<button type="submit" class="link-button danger-text">Glöm mig och logga ut</button>
+		<p class="muted small">{{t "ident.shared" .Ident.Name}}</p>
+		<form method="post" action="/glom-mig" data-confirm="{{t "ident.forget.confirm"}}">
+			<button type="submit" class="link-button danger-text">{{t "ident.forget"}}</button>
 		</form>
 		{{end}}
 	</div>

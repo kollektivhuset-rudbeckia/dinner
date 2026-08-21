@@ -12,6 +12,7 @@ import (
 	"github.com/O5ten/dinners/internal/auth"
 	"github.com/O5ten/dinners/internal/config"
 	"github.com/O5ten/dinners/internal/dinner"
+	"github.com/O5ten/dinners/internal/i18n"
 	"github.com/O5ten/dinners/internal/store"
 )
 
@@ -34,13 +35,19 @@ type scheduleRow struct {
 // Splitting them up keeps each page to one job — and keeps the server from
 // building a season's whole schedule when all you wanted was to fix a typo in
 // a team name.
-var adminTabs = []struct{ ID, Name string }{
-	{"schema", "Schema"},
-	{"lag", "Matlag"},
-	{"sasonger", "Säsonger"},
-	{"uppehall", "Uppehåll"},
-	{"installningar", "Inställningar"},
-	{"staende", "Stående anmälningar"},
+var adminTabs = []struct{ ID, Key string }{
+	{"schema", "admin.tab.schedule"},
+	{"lag", "admin.tab.teams"},
+	{"sasonger", "admin.tab.seasons"},
+	{"uppehall", "admin.tab.breaks"},
+	{"installningar", "admin.tab.settings"},
+	{"staende", "admin.tab.standing"},
+}
+
+// tab is one entry in the tab bar, with its name already translated.
+type tab struct {
+	ID   string
+	Name string
 }
 
 func adminTab(raw string) string {
@@ -50,6 +57,15 @@ func adminTab(raw string) string {
 		}
 	}
 	return adminTabs[0].ID
+}
+
+// tabsFor names the tabs in the reader's language.
+func tabsFor(lang i18n.Lang) []tab {
+	out := make([]tab, 0, len(adminTabs))
+	for _, t := range adminTabs {
+		out = append(out, tab{ID: t.ID, Name: i18n.T(lang, t.Key)})
+	}
+	return out
 }
 
 func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request, v *view) {
@@ -121,10 +137,10 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request, v *view) {
 		}
 	}
 
-	v.Title = "Administration"
+	v.Title = i18n.T(v.Lang, "admin.title")
 	v.Data = map[string]any{
 		"Tab":              tab,
-		"Tabs":             adminTabs,
+		"Tabs":             tabsFor(v.Lang),
 		"Breaks":           world.Breaks,
 		"Settings":         world.Settings,
 		"Teams":            world.Teams,
@@ -189,7 +205,8 @@ func (s *Server) adminRedirect(w http.ResponseWriter, r *http.Request, saved str
 func (s *Server) handleAdminTeam(w http.ResponseWriter, r *http.Request, v *view) {
 	ctx := r.Context()
 	if err := r.ParseForm(); err != nil {
-		s.renderError(w, r, http.StatusBadRequest, "Formuläret kunde inte läsas", "Försök igen.")
+		s.errorPage(w, r, http.StatusBadRequest,
+			"error.form", "error.form.detail")
 		return
 	}
 	id, _ := strconv.ParseInt(r.FormValue("id"), 10, 64)
@@ -207,13 +224,13 @@ func (s *Server) handleAdminTeam(w http.ResponseWriter, r *http.Request, v *view
 	name := strings.TrimSpace(r.FormValue("name"))
 	email := auth.NormalizeEmail(r.FormValue("leader_email"))
 	if name == "" {
-		s.renderError(w, r, http.StatusUnprocessableEntity, "Laget behöver ett namn",
-			"Skriv till exempel \"Lag 1\".")
+		s.errorPage(w, r, http.StatusUnprocessableEntity,
+			"error.team.name", "error.team.name.detail")
 		return
 	}
 	if email != "" && !auth.ValidEmail(email) {
-		s.renderError(w, r, http.StatusUnprocessableEntity, "E-postadressen ser inte riktig ut",
-			"Utan en adress som fungerar får lagledaren ingen matlista.")
+		s.errorPage(w, r, http.StatusUnprocessableEntity,
+			"error.team.email", "error.team.email.detail")
 		return
 	}
 	_, err := s.store.SaveTeam(ctx, store.Team{
@@ -234,7 +251,8 @@ func (s *Server) handleAdminTeam(w http.ResponseWriter, r *http.Request, v *view
 func (s *Server) handleAdminSeason(w http.ResponseWriter, r *http.Request, v *view) {
 	ctx := r.Context()
 	if err := r.ParseForm(); err != nil {
-		s.renderError(w, r, http.StatusBadRequest, "Formuläret kunde inte läsas", "Försök igen.")
+		s.errorPage(w, r, http.StatusBadRequest,
+			"error.form", "error.form.detail")
 		return
 	}
 	id, _ := strconv.ParseInt(r.FormValue("id"), 10, 64)
@@ -252,19 +270,19 @@ func (s *Server) handleAdminSeason(w http.ResponseWriter, r *http.Request, v *vi
 	loc := s.cfg.Location()
 	start, err := config.ParseDate(r.FormValue("start"), loc)
 	if err != nil {
-		s.renderError(w, r, http.StatusUnprocessableEntity, "Startdatumet går inte att läsa",
-			"Skriv det som 2026-08-25.")
+		s.errorPage(w, r, http.StatusUnprocessableEntity,
+			"error.startdate", "error.startdate.detail")
 		return
 	}
 	end, err := config.ParseDate(r.FormValue("end"), loc)
 	if err != nil {
-		s.renderError(w, r, http.StatusUnprocessableEntity, "Slutdatumet går inte att läsa",
-			"Skriv det som 2026-12-17.")
+		s.errorPage(w, r, http.StatusUnprocessableEntity,
+			"error.enddate", "error.enddate.detail")
 		return
 	}
 	if end.Before(start) {
-		s.renderError(w, r, http.StatusUnprocessableEntity, "Säsongen slutar innan den börjar",
-			"Kontrollera datumen.")
+		s.errorPage(w, r, http.StatusUnprocessableEntity,
+			"error.season.order", "error.dates.check")
 		return
 	}
 	var weekdays []time.Weekday
@@ -274,8 +292,8 @@ func (s *Server) handleAdminSeason(w http.ResponseWriter, r *http.Request, v *vi
 		}
 	}
 	if len(weekdays) == 0 {
-		s.renderError(w, r, http.StatusUnprocessableEntity, "Välj minst en middagskväll",
-			"En säsong utan kvällar ger inga middagar att anmäla sig till.")
+		s.errorPage(w, r, http.StatusUnprocessableEntity,
+			"error.season.weekdays", "error.season.weekdays.detail")
 		return
 	}
 	// Two seasons covering the same day would disagree about whether it is a
@@ -296,9 +314,8 @@ func (s *Server) handleAdminSeason(w http.ResponseWriter, r *http.Request, v *vi
 			continue
 		}
 		s.renderError(w, r, http.StatusConflict,
-			"Säsongerna överlappar varandra",
-			fmt.Sprintf("Perioden krockar med %q (%s – %s). Två säsonger kan inte gälla samma dag — flytta datumen eller ändra den andra säsongen först.",
-				other.Name, other.Start, other.End))
+			i18n.T(v.Lang, "error.season.overlap"),
+			i18n.T(v.Lang, "error.season.overlap.detail", other.Name, other.Start, other.End))
 		return
 	}
 
@@ -329,7 +346,8 @@ func (s *Server) handleAdminSeason(w http.ResponseWriter, r *http.Request, v *vi
 func (s *Server) handleAdminOrder(w http.ResponseWriter, r *http.Request, v *view) {
 	ctx := r.Context()
 	if err := r.ParseForm(); err != nil {
-		s.renderError(w, r, http.StatusBadRequest, "Formuläret kunde inte läsas", "Försök igen.")
+		s.errorPage(w, r, http.StatusBadRequest,
+			"error.form", "error.form.detail")
 		return
 	}
 
@@ -395,7 +413,8 @@ func parseIDs(raw string) []int64 {
 func (s *Server) handleAdminBreak(w http.ResponseWriter, r *http.Request, v *view) {
 	ctx := r.Context()
 	if err := r.ParseForm(); err != nil {
-		s.renderError(w, r, http.StatusBadRequest, "Formuläret kunde inte läsas", "Försök igen.")
+		s.errorPage(w, r, http.StatusBadRequest,
+			"error.form", "error.form.detail")
 		return
 	}
 	id, _ := strconv.ParseInt(r.FormValue("id"), 10, 64)
@@ -413,8 +432,8 @@ func (s *Server) handleAdminBreak(w http.ResponseWriter, r *http.Request, v *vie
 	loc := s.cfg.Location()
 	start, err := config.ParseDate(r.FormValue("start"), loc)
 	if err != nil {
-		s.renderError(w, r, http.StatusUnprocessableEntity, "Startdatumet går inte att läsa",
-			"Skriv det som 2026-10-26.")
+		s.errorPage(w, r, http.StatusUnprocessableEntity,
+			"error.startdate", "error.startdate.break")
 		return
 	}
 	// A single day off is a break from and to the same date, so an empty end
@@ -425,13 +444,13 @@ func (s *Server) handleAdminBreak(w http.ResponseWriter, r *http.Request, v *vie
 	}
 	end, err := config.ParseDate(endRaw, loc)
 	if err != nil {
-		s.renderError(w, r, http.StatusUnprocessableEntity, "Slutdatumet går inte att läsa",
-			"Skriv det som 2026-11-01, eller lämna det tomt för en enda dag.")
+		s.errorPage(w, r, http.StatusUnprocessableEntity,
+			"error.enddate", "error.enddate.break")
 		return
 	}
 	if end.Before(start) {
-		s.renderError(w, r, http.StatusUnprocessableEntity, "Uppehållet slutar innan det börjar",
-			"Kontrollera datumen.")
+		s.errorPage(w, r, http.StatusUnprocessableEntity,
+			"error.break.order", "error.dates.check")
 		return
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
@@ -455,12 +474,14 @@ func (s *Server) handleAdminBreak(w http.ResponseWriter, r *http.Request, v *vie
 func (s *Server) handleAdminSchedule(w http.ResponseWriter, r *http.Request, v *view) {
 	ctx := r.Context()
 	if err := r.ParseForm(); err != nil {
-		s.renderError(w, r, http.StatusBadRequest, "Formuläret kunde inte läsas", "Försök igen.")
+		s.errorPage(w, r, http.StatusBadRequest,
+			"error.form", "error.form.detail")
 		return
 	}
 	date := strings.TrimSpace(r.FormValue("date"))
 	if _, err := config.ParseDate(date, s.cfg.Location()); err != nil {
-		s.renderError(w, r, http.StatusBadRequest, "Okänt datum", "Försök igen.")
+		s.errorPage(w, r, http.StatusBadRequest,
+			"error.date", "error.form.detail")
 		return
 	}
 	var team sql.NullInt64
@@ -487,24 +508,26 @@ func (s *Server) handleAdminSchedule(w http.ResponseWriter, r *http.Request, v *
 func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request, v *view) {
 	ctx := r.Context()
 	if err := r.ParseForm(); err != nil {
-		s.renderError(w, r, http.StatusBadRequest, "Formuläret kunde inte läsas", "Försök igen.")
+		s.errorPage(w, r, http.StatusBadRequest,
+			"error.form", "error.form.detail")
 		return
 	}
 	wd, err := config.ParseWeekday(r.FormValue("deadline_weekday"))
 	if err != nil {
-		s.renderError(w, r, http.StatusUnprocessableEntity, "Okänd veckodag för anmälningsstopp", "Försök igen.")
+		s.errorPage(w, r, http.StatusUnprocessableEntity,
+			"error.deadline.weekday", "error.form.detail")
 		return
 	}
 	minutes, err := config.ParseClock(r.FormValue("deadline_time"))
 	if err != nil {
-		s.renderError(w, r, http.StatusUnprocessableEntity, "Klockslaget går inte att läsa",
-			"Skriv det som 23:59.")
+		s.errorPage(w, r, http.StatusUnprocessableEntity,
+			"error.deadline.time", "error.deadline.time.detail")
 		return
 	}
 	weeks, err := strconv.Atoi(strings.TrimSpace(r.FormValue("deadline_weeks_before")))
 	if err != nil || weeks < 0 || weeks > 8 {
-		s.renderError(w, r, http.StatusUnprocessableEntity, "Antalet veckor går inte att läsa",
-			"Skriv hur många hela veckor före middagsveckan anmälan ska stänga, till exempel 1.")
+		s.errorPage(w, r, http.StatusUnprocessableEntity,
+			"error.deadline.weeks", "error.deadline.weeks.detail")
 		return
 	}
 	err = s.store.SaveSettings(ctx, store.Settings{
@@ -526,7 +549,8 @@ func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request, v *
 func (s *Server) handleAdminSend(w http.ResponseWriter, r *http.Request, v *view) {
 	ctx := r.Context()
 	if err := r.ParseForm(); err != nil {
-		s.renderError(w, r, http.StatusBadRequest, "Formuläret kunde inte läsas", "Försök igen.")
+		s.errorPage(w, r, http.StatusBadRequest,
+			"error.form", "error.form.detail")
 		return
 	}
 	world, err := s.world(ctx)
@@ -536,7 +560,8 @@ func (s *Server) handleAdminSend(w http.ResponseWriter, r *http.Request, v *view
 	}
 	d, ok := world.Schedule.Find(strings.TrimSpace(r.FormValue("date")))
 	if !ok {
-		s.renderError(w, r, http.StatusNotFound, "Ingen middag den dagen", "Kontrollera datumet.")
+		s.errorPage(w, r, http.StatusNotFound,
+			"error.nodinner", "error.nodinner.check")
 		return
 	}
 	// Sending again means forgetting that we sent before, so the log keeps
@@ -556,7 +581,8 @@ func (s *Server) handleAdminSend(w http.ResponseWriter, r *http.Request, v *view
 func (s *Server) handleAdminDeleteRegistration(w http.ResponseWriter, r *http.Request, v *view) {
 	ctx := r.Context()
 	if err := r.ParseForm(); err != nil {
-		s.renderError(w, r, http.StatusBadRequest, "Formuläret kunde inte läsas", "Försök igen.")
+		s.errorPage(w, r, http.StatusBadRequest,
+			"error.form", "error.form.detail")
 		return
 	}
 	if err := s.store.DeleteRegistration(ctx, r.FormValue("id")); err != nil {
@@ -598,6 +624,9 @@ func (s *Server) handleAdminCSV(w http.ResponseWriter, r *http.Request, v *view)
 		return
 	}
 
+	// The export is read in a spreadsheet, so it follows the reader's language
+	// like every other page rather than the deployment default.
+	lang := v.Lang
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition",
 		fmt.Sprintf(`attachment; filename="middagar-%s-%s.csv"`, from, to))
@@ -605,7 +634,7 @@ func (s *Server) handleAdminCSV(w http.ResponseWriter, r *http.Request, v *view)
 	defer cw.Flush()
 	cw.Write([]string{"datum", "veckodag", "matlag", "instald", "namn",
 		"lagenhet", "epost", "gast", "vard", "staende", "vuxna", "barn",
-		"veganer", "vegetarianer", "allatare", "specialkost"})
+		"kosthallning", "specialkost"})
 	for _, d := range dinners {
 		team := ""
 		if d.Team != nil {
@@ -617,12 +646,11 @@ func (s *Server) handleAdminCSV(w http.ResponseWriter, r *http.Request, v *view)
 		}
 		for _, a := range summaries[d.Key].Attendees {
 			cw.Write([]string{
-				d.Key, WeekdayShort(d.Date), team, cancelled,
+				d.Key, i18n.WeekdayShort(lang, d.Date), team, cancelled,
 				a.Name, a.Apartment, a.Email,
 				yesNo(a.Guest), a.Host, yesNo(a.Standing),
 				strconv.Itoa(a.Adults), strconv.Itoa(a.Children),
-				strconv.Itoa(a.Vegans), strconv.Itoa(a.Vegetarians),
-				strconv.Itoa(a.Omnivores()), a.Note,
+				string(a.Diet), a.Note,
 			})
 		}
 	}

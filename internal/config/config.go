@@ -30,7 +30,10 @@ type Config struct {
 
 // Site holds presentation-level settings shared by every page.
 type Site struct {
-	Title      string `yaml:"title"`
+	Title string `yaml:"title"`
+	// Language is what a visitor sees before choosing for themselves, and the
+	// language the cooking team's mail is written in. "sv" or "en".
+	Language   string `yaml:"language"`
 	Tagline    string `yaml:"tagline"`
 	HouseName  string `yaml:"house_name"`
 	Timezone   string `yaml:"timezone"`
@@ -46,12 +49,31 @@ type Dinner struct {
 	Weekdays    []string `yaml:"weekdays"`
 	ServingTime string   `yaml:"serving_time"`
 	Location    string   `yaml:"location"`
-	// Info is shown on the registration page, e.g. what a portion costs.
-	Info string `yaml:"info"`
-	// GuestInfo is the same thing for the public guest page.
-	GuestInfo string `yaml:"guest_info"`
+	// GuestInfo is the house's own words at the top of the public guest page,
+	// in place of the built-in ones. Give both languages if you set it at all:
+	// a page that switches to English and keeps one Swedish paragraph looks
+	// broken. Either may be left out, in which case the other is used, and if
+	// both are empty the built-in phrase is shown instead.
+	GuestInfo   string `yaml:"guest_info"`
+	GuestInfoEN string `yaml:"guest_info_en"`
 
 	weekdays []time.Weekday
+}
+
+// GuestText returns the house's own wording for a language, or an empty string
+// when it has nothing to say and the built-in phrase should be used.
+func (d Dinner) GuestText(lang string) string {
+	sv, en := strings.TrimSpace(d.GuestInfo), strings.TrimSpace(d.GuestInfoEN)
+	if lang == "en" {
+		if en != "" {
+			return en
+		}
+		return sv
+	}
+	if sv != "" {
+		return sv
+	}
+	return en
 }
 
 // ParsedWeekdays returns the dinner evenings as time.Weekday values.
@@ -155,6 +177,12 @@ func (c *Config) normalize() error {
 	}
 	if c.Site.Timezone == "" {
 		c.Site.Timezone = "Europe/Stockholm"
+	}
+	if c.Site.Language == "" {
+		c.Site.Language = "sv"
+	}
+	if c.Site.Language != "sv" && c.Site.Language != "en" {
+		return fmt.Errorf(`site.language must be "sv" or "en", not %q`, c.Site.Language)
 	}
 	loc, err := time.LoadLocation(c.Site.Timezone)
 	if err != nil {

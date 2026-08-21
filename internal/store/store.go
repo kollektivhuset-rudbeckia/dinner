@@ -31,30 +31,65 @@ const (
 	KindGuest  Kind = "guest"
 )
 
+// Diet is what a registration eats. One choice covers everyone in it: a
+// household that needs two different meals makes two registrations rather than
+// splitting one, which keeps the cooking team's totals a simple sum.
+type Diet string
+
+const (
+	DietOmnivore    Diet = "allatare"
+	DietFlexitarian Diet = "flexitarian"
+	DietPescetarian Diet = "pescetarian"
+	DietVegetarian  Diet = "vegetarian"
+	DietVegan       Diet = "vegan"
+)
+
+// Diets are the choices in the order they are offered and counted, from least
+// to most restrictive. The order is deliberate: it is also the order of the
+// columns on the printed matlista.
+var Diets = []Diet{
+	DietOmnivore, DietFlexitarian, DietPescetarian, DietVegetarian, DietVegan,
+}
+
+// ParseDiet reads a stored or submitted value, falling back to eating
+// everything so a missing or unknown choice can never lose a portion.
+func ParseDiet(s string) (Diet, bool) {
+	for _, d := range Diets {
+		if string(d) == s {
+			return d, true
+		}
+	}
+	return DietOmnivore, false
+}
+
+// Valid reports whether d is one of the offered diets.
+func (d Diet) Valid() bool {
+	_, ok := ParseDiet(string(d))
+	return ok
+}
+
 // Registration is one household's answer for one dinner. Adults and Children
-// count everyone eating; Vegans and Vegetarians say how many of those need
-// that food, and the remainder eat what is served.
+// count everyone eating, and Diet is what all of them are served.
 //
 // A registration with nobody in it is not an absence of an answer: it is the
 // answer "we are not coming", which is what lets a household opt out of a
 // dinner their standing registration would otherwise cover.
 type Registration struct {
-	ID          string
-	Date        string
-	Kind        Kind
-	Email       string
-	Name        string
-	Apartment   string
-	Host        string
-	Adults      int
-	Children    int
-	Vegans      int
-	Vegetarians int
-	Note        string
-	Token       string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	CreatedIP   string
+	ID        string
+	Date      string
+	Kind      Kind
+	Email     string
+	Name      string
+	Apartment string
+	Host      string
+	Adults    int
+	Children  int
+	Diet      Diet
+	Note      string
+	Token     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	CreatedIP string
 }
 
 // People is how many will eat.
@@ -63,15 +98,6 @@ func (r Registration) People() int { return r.Adults + r.Children }
 // Attending reports whether anyone is coming at all.
 func (r Registration) Attending() bool { return r.People() > 0 }
 
-// Omnivores is everyone who eats what is served.
-func (r Registration) Omnivores() int {
-	n := r.People() - r.Vegans - r.Vegetarians
-	if n < 0 {
-		return 0
-	}
-	return n
-}
-
 // Guest reports whether this came in through the public page.
 func (r Registration) Guest() bool { return r.Kind == KindGuest }
 
@@ -79,17 +105,16 @@ func (r Registration) Guest() bool { return r.Kind == KindGuest }
 // the replacement for the permanent-registration sheet. A registration for a
 // specific date always wins over it.
 type Standing struct {
-	ID          string
-	Email       string
-	Weekday     time.Weekday
-	Name        string
-	Apartment   string
-	Adults      int
-	Children    int
-	Vegans      int
-	Vegetarians int
-	Note        string
-	UpdatedAt   time.Time
+	ID        string
+	Email     string
+	Weekday   time.Weekday
+	Name      string
+	Apartment string
+	Adults    int
+	Children  int
+	Diet      Diet
+	Note      string
+	UpdatedAt time.Time
 }
 
 // Team is a cooking team. The leader is who receives the mail with the link to
@@ -222,8 +247,7 @@ CREATE TABLE IF NOT EXISTS registrations (
 	host        TEXT NOT NULL DEFAULT '',
 	adults      INTEGER NOT NULL DEFAULT 0,
 	children    INTEGER NOT NULL DEFAULT 0,
-	vegans      INTEGER NOT NULL DEFAULT 0,
-	vegetarians INTEGER NOT NULL DEFAULT 0,
+	diet        TEXT NOT NULL DEFAULT 'allatare',
 	note        TEXT NOT NULL DEFAULT '',
 	token       TEXT NOT NULL DEFAULT '',
 	created_at  TEXT NOT NULL,
@@ -246,8 +270,7 @@ CREATE TABLE IF NOT EXISTS standing (
 	apartment   TEXT NOT NULL DEFAULT '',
 	adults      INTEGER NOT NULL DEFAULT 0,
 	children    INTEGER NOT NULL DEFAULT 0,
-	vegans      INTEGER NOT NULL DEFAULT 0,
-	vegetarians INTEGER NOT NULL DEFAULT 0,
+	diet        TEXT NOT NULL DEFAULT 'allatare',
 	note        TEXT NOT NULL DEFAULT '',
 	updated_at  TEXT NOT NULL
 );
@@ -289,7 +312,57 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		return nil, fmt.Errorf("migrate database: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// migrate brings a database written by an older build up to date. There is no
+// version table: each step asks the schema what it looks like and does nothing
+// if it is already right, which is enough for a single deployment and cannot
+// get out of step with itself.
+func migrate(db *sql.DB) error {
+	// Diets used to be two counts per registration — how many vegans and how
+	// many vegetarians — and are now one choice for the whole registration.
+	// Anything that was partly vegan or vegetarian becomes that diet outright,
+	// since that is the meal the cooking team has to produce.
+	for _, table := range []string{"registrations", "standing"} {
+		has, err := hasColumn(db, table, "diet")
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE ` + table +
+			` ADD COLUMN diet TEXT NOT NULL DEFAULT 'allatare'`); err != nil {
+			return fmt.Errorf("add %s.diet: %w", table, err)
+		}
+		old, err := hasColumn(db, table, "vegans")
+		if err != nil {
+			return err
+		}
+		if !old {
+			continue
+		}
+		if _, err := db.Exec(`UPDATE ` + table + ` SET diet = CASE
+			WHEN vegans > 0      THEN 'vegan'
+			WHEN vegetarians > 0 THEN 'vegetarian'
+			ELSE 'allatare' END`); err != nil {
+			return fmt.Errorf("backfill %s.diet: %w", table, err)
+		}
+	}
+	return nil
+}
+
+func hasColumn(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query(`SELECT 1 FROM pragma_table_info(?) WHERE name = ?`, table, column)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	return rows.Next(), rows.Err()
 }
 
 // Close releases the database handle.
@@ -701,13 +774,13 @@ func (s *Store) SaveOverride(ctx context.Context, o Override) error {
 // ---------------------------------------------------------- registrations --
 
 const regCols = `id, date, kind, email, name, apartment, host, adults, children,
-	vegans, vegetarians, note, token, created_at, updated_at, created_ip`
+	diet, note, token, created_at, updated_at, created_ip`
 
 func scanReg(row interface{ Scan(...any) error }) (Registration, error) {
 	var r Registration
 	var created, updated string
 	err := row.Scan(&r.ID, &r.Date, &r.Kind, &r.Email, &r.Name, &r.Apartment, &r.Host,
-		&r.Adults, &r.Children, &r.Vegans, &r.Vegetarians, &r.Note, &r.Token,
+		&r.Adults, &r.Children, &r.Diet, &r.Note, &r.Token,
 		&created, &updated, &r.CreatedIP)
 	if err != nil {
 		return r, err
@@ -811,14 +884,13 @@ func (s *Store) SaveRegistration(ctx context.Context, r Registration) error {
 	}
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO registrations (`+regCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		`INSERT INTO registrations (`+regCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   name=excluded.name, apartment=excluded.apartment, host=excluded.host,
 		   adults=excluded.adults, children=excluded.children,
-		   vegans=excluded.vegans, vegetarians=excluded.vegetarians,
-		   note=excluded.note, updated_at=excluded.updated_at`,
+		   diet=excluded.diet, note=excluded.note, updated_at=excluded.updated_at`,
 		r.ID, r.Date, r.Kind, r.Email, r.Name, r.Apartment, r.Host,
-		r.Adults, r.Children, r.Vegans, r.Vegetarians, r.Note, r.Token,
+		r.Adults, r.Children, r.Diet, r.Note, r.Token,
 		utc(r.CreatedAt), utc(r.UpdatedAt), r.CreatedIP)
 	if err != nil {
 		return err
@@ -845,14 +917,14 @@ func (s *Store) DeleteRegistration(ctx context.Context, id string) error {
 // -------------------------------------------------------------- standing --
 
 const standingCols = `id, email, weekday, name, apartment, adults, children,
-	vegans, vegetarians, note, updated_at`
+	diet, note, updated_at`
 
 func scanStanding(row interface{ Scan(...any) error }) (Standing, error) {
 	var st Standing
 	var wd int
 	var updated string
 	err := row.Scan(&st.ID, &st.Email, &wd, &st.Name, &st.Apartment, &st.Adults,
-		&st.Children, &st.Vegans, &st.Vegetarians, &st.Note, &updated)
+		&st.Children, &st.Diet, &st.Note, &updated)
 	if err != nil {
 		return st, err
 	}
@@ -903,14 +975,13 @@ func (s *Store) SaveStanding(ctx context.Context, st Standing) error {
 		return s.DeleteStanding(ctx, st.Email, st.Weekday)
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO standing (`+standingCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+		`INSERT INTO standing (`+standingCols+`) VALUES (?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(email, weekday) DO UPDATE SET
 		   name=excluded.name, apartment=excluded.apartment,
 		   adults=excluded.adults, children=excluded.children,
-		   vegans=excluded.vegans, vegetarians=excluded.vegetarians,
-		   note=excluded.note, updated_at=excluded.updated_at`,
+		   diet=excluded.diet, note=excluded.note, updated_at=excluded.updated_at`,
 		st.ID, st.Email, int(st.Weekday), st.Name, st.Apartment, st.Adults,
-		st.Children, st.Vegans, st.Vegetarians, st.Note, utc(st.UpdatedAt))
+		st.Children, st.Diet, st.Note, utc(st.UpdatedAt))
 	return err
 }
 

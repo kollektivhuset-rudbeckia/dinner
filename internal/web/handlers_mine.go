@@ -6,6 +6,7 @@ import (
 
 	"github.com/O5ten/dinners/internal/auth"
 	"github.com/O5ten/dinners/internal/config"
+	"github.com/O5ten/dinners/internal/i18n"
 	"github.com/O5ten/dinners/internal/store"
 )
 
@@ -38,12 +39,15 @@ func (s *Server) handleMine(w http.ResponseWriter, r *http.Request, v *view) {
 	rows := make([]standingRow, 0, 2)
 	for _, wd := range dinnerWeekdays(world, s.cfg) {
 		st, ok := byWeekday[wd]
+		if !ok {
+			st.Diet = store.DietOmnivore
+		}
 		rows = append(rows, standingRow{
 			Weekday: wd,
 			Set:     ok,
 			Form: regForm{
 				Adults: st.Adults, Children: st.Children,
-				Vegans: st.Vegans, Vegetarians: st.Vegetarians, Note: st.Note,
+				Diet: st.Diet, Note: st.Note,
 			},
 		})
 	}
@@ -104,12 +108,14 @@ func mondayIndex(wd time.Weekday) int { return (int(wd) + 6) % 7 }
 func (s *Server) handleStanding(w http.ResponseWriter, r *http.Request, v *view) {
 	ctx := r.Context()
 	if err := r.ParseForm(); err != nil {
-		s.renderError(w, r, http.StatusBadRequest, "Formuläret kunde inte läsas", "Försök igen.")
+		s.errorPage(w, r, http.StatusBadRequest,
+			"error.form", "error.form.detail")
 		return
 	}
 	wd, err := config.ParseWeekday(r.FormValue("weekday"))
 	if err != nil {
-		s.renderError(w, r, http.StatusBadRequest, "Okänd veckodag", "Försök igen.")
+		s.errorPage(w, r, http.StatusBadRequest,
+			"error.weekday", "error.form.detail")
 		return
 	}
 	form := readForm(r)
@@ -117,10 +123,11 @@ func (s *Server) handleStanding(w http.ResponseWriter, r *http.Request, v *view)
 	// standing registration for nobody means the same thing, so both roads
 	// lead to the same place.
 	if r.FormValue("action") == "clear" {
-		form = regForm{}
+		form = regForm{Diet: store.DietOmnivore}
 	}
-	if problem := validateCounts(form); problem != "" {
-		s.renderError(w, r, http.StatusUnprocessableEntity, "Anmälan gick inte att spara", problem)
+	if problem := validateParty(v.Lang, form); problem != "" {
+		s.renderError(w, r, http.StatusUnprocessableEntity,
+			i18n.T(v.Lang, "error.standing"), problem)
 		return
 	}
 	err = s.store.SaveStanding(ctx, store.Standing{
@@ -129,8 +136,9 @@ func (s *Server) handleStanding(w http.ResponseWriter, r *http.Request, v *view)
 		Weekday:   wd,
 		Name:      v.Ident.Name,
 		Apartment: v.Ident.Apartment,
-		Adults:    form.Adults, Children: form.Children,
-		Vegans: form.Vegans, Vegetarians: form.Vegetarians,
+		Adults:    form.Adults,
+		Children:  form.Children,
+		Diet:      form.Diet,
 		Note:      form.Note,
 		UpdatedAt: s.now(),
 	})

@@ -1,22 +1,19 @@
 {{define "content"}}
 <div class="hero">
-	<h1>Middagar i huset</h1>
+	<h1>{{t "index.title"}}</h1>
 	<p class="lede">
-		Vi äter tillsammans {{joinWeekdays .Dinner.ParsedWeekdays}}
-		{{- with .Dinner.ServingTime}} klockan {{.}}{{end}}
-		{{- with .Dinner.Location}} i {{.}}{{end}}.
-		Anmäl dig innan matlaget handlar, så blir det lagom mycket mat.
+		{{- $when := joinWeekdays .Dinner.ParsedWeekdays}}
+		{{- with .Dinner.ServingTime}}{{$when = printf "%s %s" $when (t "index.lede.at" .)}}{{end}}
+		{{- with .Dinner.Location}}{{$when = printf "%s %s" $when (t "index.lede.in" .)}}{{end}}
+		{{- t "index.lede" $when}}
 	</p>
 </div>
 
 {{if .Data.NoSchedule}}
 <div class="panel">
-	<h2>Ingen säsong är inlagd ännu</h2>
-	<p class="muted">
-		Så fort matgruppen lägger in en säsong med start- och slutdatum dyker
-		kvällarna upp här.
-	</p>
-	{{if .Role.Admin}}<p><a class="button primary" href="/admin">Lägg in en säsong</a></p>{{end}}
+	<h2>{{t "index.noseason"}}</h2>
+	<p class="muted">{{t "index.noseason.body"}}</p>
+	{{if .Role.Admin}}<p><a class="button primary" href="/admin">{{t "index.noseason.cta"}}</a></p>{{end}}
 </div>
 {{else}}
 
@@ -32,9 +29,9 @@
 	{{range .Data.Rows}}
 	{{if .Break}}
 	<li class="dinner-pause">
-		<span class="pause-label">Uppehåll</span>
+		<span class="pause-label">{{t "index.pause"}}</span>
 		<strong>{{.Break.Name}}</strong>
-		<span class="muted">{{.Break.Start}} – {{.Break.End}} · ingen middag</span>
+		<span class="muted">{{.Break.Start}} – {{.Break.End}} · {{t "index.pause.none"}}</span>
 	</li>
 	{{else}}
 	{{$d := .Dinner}}
@@ -50,13 +47,13 @@
 			</h2>
 			<p class="dinner-facts">
 				{{if $d.Cancelled}}
-					<span class="badge badge-off">Inställd</span>
+					<span class="badge badge-off">{{t "index.cancelled"}}</span>
 				{{else if .Open}}
-					<span class="badge badge-free">Anmälan öppen</span>
-					<span class="muted small">stänger {{dateTime $d.Closes}} · {{countdown $d.Closes $.Now}}</span>
+					<span class="badge badge-free">{{t "index.open"}}</span>
+					<span class="muted small">{{t "index.closes" (dateTime $d.Closes)}} · {{countdown $d.Closes $.Now}}</span>
 				{{else}}
-					<span class="badge badge-busy">Anmälan stängd</span>
-					<span class="muted small">stängde {{dateTime $d.Closes}}</span>
+					<span class="badge badge-busy">{{t "index.closed"}}</span>
+					<span class="muted small">{{t "index.closedat" (dateTime $d.Closes)}}</span>
 				{{end}}
 			</p>
 			{{with $d.Note}}<p class="dinner-note">{{.}}</p>{{end}}
@@ -64,33 +61,33 @@
 			<p class="dinner-mine">
 				{{with .Mine}}
 					{{if .People}}
-						<span class="ok-text">✓ Ni är anmälda:</span>
-						{{if .Adults}}{{count .Adults "vuxen" "vuxna"}}{{end}}{{if and .Adults .Children}}, {{end}}{{if .Children}}{{count .Children "barn" "barn"}}{{end}}
-						{{if .Standing}}<span class="chip" title="Från din stående anmälan">stående</span>{{end}}
+						<span class="ok-text">{{t "index.mine"}}</span>
+						{{if .Adults}}{{count "adult" .Adults}}{{end}}{{if and .Adults .Children}}, {{end}}{{if .Children}}{{count "child" .Children}}{{end}}
+						{{if .Standing}}<span class="chip" title="{{t "index.mine.standing"}}">{{t "attendee.standing"}}</span>{{end}}
 					{{else}}
-						<span class="muted">Ni har tackat nej till den här middagen.</span>
+						<span class="muted">{{t "index.declined"}}</span>
 					{{end}}
 				{{else}}
-					<span class="muted">Du har inte anmält dig.</span>
+					<span class="muted">{{t "index.notyet"}}</span>
 				{{end}}
 			</p>
 			{{end}}
 		</div>
 		<div class="dinner-side">
 			<a class="button small{{if and .Open (not .Answered)}} primary{{end}}" href="/middag/{{$d.Key}}">
-				{{if $d.Cancelled}}Visa{{else if not .Open}}Se listan{{else if .Answered}}Ändra{{else}}Anmäl dig{{end}}
+				{{if $d.Cancelled}}{{t "show"}}{{else if not .Open}}{{t "index.cta.list"}}{{else if .Answered}}{{t "change"}}{{else}}{{t "index.cta.register"}}{{end}}
 			</a>
 		</div>
 	</li>
 	{{end}}
 	{{else}}
-	<li class="empty">Inga fler middagar den här säsongen.</li>
+	<li class="empty">{{t "index.empty"}}</li>
 	{{end}}
 </ul>
 
 <p class="head-links">
-	<a class="quiet-link" href="/mina">Mina anmälningar och stående anmälan →</a>
-	{{if .GuestOpen}}<a class="quiet-link" href="/gast">Länk att ge till gäster →</a>{{end}}
+	<a class="quiet-link" href="/mina">{{t "index.link.mine"}}</a>
+	{{if .GuestOpen}}<a class="quiet-link" href="/gast">{{t "index.link.guest"}}</a>{{end}}
 </p>
 {{end}}
 {{end}}

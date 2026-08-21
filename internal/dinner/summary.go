@@ -12,14 +12,13 @@ import (
 type Attendee struct {
 	// ID is the registration's identifier, empty for a household that has not
 	// answered for this evening and is coming on its standing registration.
-	ID          string
-	Name        string
-	Apartment   string
-	Adults      int
-	Children    int
-	Vegans      int
-	Vegetarians int
-	Note        string
+	ID        string
+	Name      string
+	Apartment string
+	Adults    int
+	Children  int
+	Diet      store.Diet
+	Note      string
 	// Host is the member a guest is visiting.
 	Host  string
 	Guest bool
@@ -34,14 +33,8 @@ type Attendee struct {
 // People is how many will eat.
 func (a Attendee) People() int { return a.Adults + a.Children }
 
-// Omnivores is everyone in the household who eats what is served.
-func (a Attendee) Omnivores() int {
-	n := a.People() - a.Vegans - a.Vegetarians
-	if n < 0 {
-		return 0
-	}
-	return n
-}
+// Diet is chosen once for the whole registration, so every one of these
+// people is served the same meal.
 
 // Summary is everything the cooking team needs to know about one evening.
 type Summary struct {
@@ -57,9 +50,11 @@ type Summary struct {
 	Children   int
 	People     int
 
-	Vegans      int
-	Vegetarians int
-	Omnivores   int
+	// Diets counts the people, not the households, behind each meal. Every
+	// diet is present even at zero, so the cooking team reads the same rows
+	// every week and can see that nobody needs the vegan pot rather than
+	// wondering whether it was left out.
+	Diets []DietCount
 
 	// Guests counts visitors, who are already included in the totals above.
 	Guests int
@@ -72,6 +67,26 @@ type Summary struct {
 type Note struct {
 	Name string
 	Text string
+}
+
+// DietCount is how many people are served one of the meals.
+type DietCount struct {
+	Diet store.Diet
+	// People is how many portions of this meal are needed.
+	People int
+	// Households is how many registrations asked for it, which is what the
+	// team counts when it lays the table rather than when it cooks.
+	Households int
+}
+
+// Count returns the number of people on one diet.
+func (s Summary) Count(d store.Diet) int {
+	for _, c := range s.Diets {
+		if c.Diet == d {
+			return c.People
+		}
+	}
+	return 0
 }
 
 // Resolve merges the answers given for one evening with the standing
@@ -89,6 +104,8 @@ func Resolve(regs []store.Registration, standing []store.Standing) Summary {
 	}
 
 	var s Summary
+	people := map[store.Diet]int{}
+	households := map[store.Diet]int{}
 	add := func(a Attendee) {
 		if a.People() <= 0 {
 			s.Declined = append(s.Declined, a)
@@ -98,8 +115,14 @@ func Resolve(regs []store.Registration, standing []store.Standing) Summary {
 		s.Households++
 		s.Adults += a.Adults
 		s.Children += a.Children
-		s.Vegans += a.Vegans
-		s.Vegetarians += a.Vegetarians
+		diet := a.Diet
+		if !diet.Valid() {
+			// A blank or unknown diet has to be fed something, and the meal
+			// with no restrictions is the safe guess to show the team.
+			diet = store.DietOmnivore
+		}
+		people[diet] += a.People()
+		households[diet]++
 		if a.Guest {
 			s.Guests += a.People()
 		}
@@ -111,8 +134,7 @@ func Resolve(regs []store.Registration, standing []store.Standing) Summary {
 	for _, r := range regs {
 		add(Attendee{
 			ID: r.ID, Name: r.Name, Apartment: r.Apartment,
-			Adults: r.Adults, Children: r.Children,
-			Vegans: r.Vegans, Vegetarians: r.Vegetarians,
+			Adults: r.Adults, Children: r.Children, Diet: r.Diet,
 			Note: r.Note, Host: r.Host, Guest: r.Guest(), Email: r.Email,
 		})
 	}
@@ -122,16 +144,16 @@ func Resolve(regs []store.Registration, standing []store.Standing) Summary {
 		}
 		add(Attendee{
 			Name: st.Name, Apartment: st.Apartment,
-			Adults: st.Adults, Children: st.Children,
-			Vegans: st.Vegans, Vegetarians: st.Vegetarians,
+			Adults: st.Adults, Children: st.Children, Diet: st.Diet,
 			Note: st.Note, Standing: true, Email: st.Email,
 		})
 	}
 
 	s.People = s.Adults + s.Children
-	s.Omnivores = s.People - s.Vegans - s.Vegetarians
-	if s.Omnivores < 0 {
-		s.Omnivores = 0
+	for _, d := range store.Diets {
+		s.Diets = append(s.Diets, DietCount{
+			Diet: d, People: people[d], Households: households[d],
+		})
 	}
 
 	byName := func(list []Attendee) {

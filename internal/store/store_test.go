@@ -24,6 +24,7 @@ func reg(date, email, name string, adults, children int) Registration {
 	return Registration{
 		ID: "id-" + email + "-" + date, Date: date, Kind: KindMember,
 		Email: email, Name: name, Adults: adults, Children: children,
+		Diet:  DietOmnivore,
 		Token: "tok-" + email + "-" + date, CreatedAt: now, UpdatedAt: now,
 	}
 }
@@ -120,7 +121,7 @@ func TestGuestRegistrationsAreAlwaysSeparateRows(t *testing.T) {
 	for i, name := range []string{"Kalle", "Maja"} {
 		r := Registration{
 			ID: "g" + string(rune('0'+i)), Date: "2026-08-25", Kind: KindGuest,
-			Name: name, Email: "", Adults: 1,
+			Name: name, Email: "", Adults: 1, Diet: DietOmnivore,
 			Token: "t" + string(rune('0'+i)), CreatedAt: now, UpdatedAt: now,
 		}
 		if err := st.SaveRegistration(ctx, r); err != nil {
@@ -137,7 +138,7 @@ func TestRegistrationByToken(t *testing.T) {
 	st := open(t)
 	ctx := context.Background()
 	r := Registration{ID: "g1", Date: "2026-08-25", Kind: KindGuest, Name: "Kalle",
-		Adults: 2, Token: "secret-token", CreatedAt: now, UpdatedAt: now}
+		Adults: 2, Diet: DietVegan, Token: "secret-token", CreatedAt: now, UpdatedAt: now}
 	if err := st.SaveRegistration(ctx, r); err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +215,7 @@ func TestStandingUpsertAndClear(t *testing.T) {
 	st := open(t)
 	ctx := context.Background()
 	base := Standing{ID: "s1", Email: "anna@x.se", Weekday: time.Tuesday,
-		Name: "Anna", Adults: 2, Children: 1, UpdatedAt: now}
+		Name: "Anna", Adults: 2, Children: 1, Diet: DietVegetarian, UpdatedAt: now}
 	if err := st.SaveStanding(ctx, base); err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +253,7 @@ func TestStandingIsPerWeekday(t *testing.T) {
 	for _, wd := range []time.Weekday{time.Tuesday, time.Thursday} {
 		if err := st.SaveStanding(ctx, Standing{
 			ID: "s" + wd.String(), Email: "anna@x.se", Weekday: wd,
-			Name: "Anna", Adults: 1, UpdatedAt: now,
+			Name: "Anna", Adults: 1, Diet: DietOmnivore, UpdatedAt: now,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -628,5 +629,143 @@ func TestSeasonOverlap(t *testing.T) {
 		if base.Overlaps(other) {
 			t.Errorf("%s–%s should not overlap %s–%s", other.Start, other.End, base.Start, base.End)
 		}
+	}
+}
+
+func TestDietRoundTripsAndDefaultsSafely(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+	r := reg("2026-08-25", "anna@x.se", "Anna", 2, 0)
+	r.Diet = DietFlexitarian
+	if err := st.SaveRegistration(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.MemberRegistration(ctx, "2026-08-25", "anna@x.se")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Diet != DietFlexitarian {
+		t.Errorf("Diet = %q", got.Diet)
+	}
+
+	// Changing the diet is an edit, not a second registration.
+	r.Diet = DietVegan
+	if err := st.SaveRegistration(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	all, _ := st.Registrations(ctx, "2026-08-25")
+	if len(all) != 1 || all[0].Diet != DietVegan {
+		t.Errorf("registrations = %+v", all)
+	}
+}
+
+func TestParseDiet(t *testing.T) {
+	for _, d := range Diets {
+		got, ok := ParseDiet(string(d))
+		if !ok || got != d {
+			t.Errorf("ParseDiet(%q) = %q, %v", d, got, ok)
+		}
+		if !d.Valid() {
+			t.Errorf("%q should be valid", d)
+		}
+	}
+	// Anything unrecognised has to be fed something, and the unrestricted meal
+	// is the safe answer.
+	for _, s := range []string{"", "vegans", "VEGAN", "makrobiotisk"} {
+		got, ok := ParseDiet(s)
+		if ok {
+			t.Errorf("ParseDiet(%q) reported success", s)
+		}
+		if got != DietOmnivore {
+			t.Errorf("ParseDiet(%q) = %q, want the unrestricted meal", s, got)
+		}
+	}
+	if Diet("makrobiotisk").Valid() {
+		t.Error("an unknown diet must not report itself valid")
+	}
+}
+
+// A database written by the two-counts build has to come across without losing
+// anyone's meal.
+func TestMigrationFromTheOldDietCounts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	old, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The shape the previous build wrote, diet column and all absent.
+	if _, err := old.Exec(`
+		CREATE TABLE registrations (
+			id TEXT PRIMARY KEY, date TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'member',
+			email TEXT NOT NULL DEFAULT '', name TEXT NOT NULL,
+			apartment TEXT NOT NULL DEFAULT '', host TEXT NOT NULL DEFAULT '',
+			adults INTEGER NOT NULL DEFAULT 0, children INTEGER NOT NULL DEFAULT 0,
+			vegans INTEGER NOT NULL DEFAULT 0, vegetarians INTEGER NOT NULL DEFAULT 0,
+			note TEXT NOT NULL DEFAULT '', token TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+			created_ip TEXT NOT NULL DEFAULT ''
+		);
+		CREATE TABLE standing (
+			id TEXT PRIMARY KEY, email TEXT NOT NULL, weekday INTEGER NOT NULL,
+			name TEXT NOT NULL, apartment TEXT NOT NULL DEFAULT '',
+			adults INTEGER NOT NULL DEFAULT 0, children INTEGER NOT NULL DEFAULT 0,
+			vegans INTEGER NOT NULL DEFAULT 0, vegetarians INTEGER NOT NULL DEFAULT 0,
+			note TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
+		);
+		INSERT INTO registrations (id, date, email, name, adults, children, vegans, vegetarians, created_at, updated_at)
+		VALUES ('r1', '2026-08-25', 'a@x.se', 'Allätarna', 2, 1, 0, 0, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z'),
+		       ('r2', '2026-08-25', 'b@x.se', 'Veganen',   1, 0, 1, 0, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z'),
+		       ('r3', '2026-08-25', 'c@x.se', 'Blandat',   2, 1, 0, 2, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z');
+		INSERT INTO standing (id, email, weekday, name, adults, vegans, vegetarians, updated_at)
+		VALUES ('s1', 'greta@x.se', 2, 'Greta', 1, 1, 0, '2026-08-01T10:00:00Z');
+	`); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("opening an old database: %v", err)
+	}
+	defer st.Close()
+
+	ctx := context.Background()
+	byName := map[string]Diet{}
+	regs, err := st.Registrations(ctx, "2026-08-25")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range regs {
+		byName[r.Name] = r.Diet
+	}
+	want := map[string]Diet{
+		"Allätarna": DietOmnivore,
+		"Veganen":   DietVegan,
+		// Partly vegetarian becomes vegetarian outright: that is the meal the
+		// cooking team has to produce either way.
+		"Blandat": DietVegetarian,
+	}
+	for name, diet := range want {
+		if byName[name] != diet {
+			t.Errorf("%s migrated to %q, want %q", name, byName[name], diet)
+		}
+	}
+	standing, err := st.StandingByEmail(ctx, "greta@x.se")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(standing) != 1 || standing[0].Diet != DietVegan {
+		t.Errorf("standing migrated to %+v", standing)
+	}
+
+	// Opening it again must be a no-op rather than a re-migration.
+	st.Close()
+	again, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopening: %v", err)
+	}
+	defer again.Close()
+	if regs, _ := again.Registrations(ctx, "2026-08-25"); len(regs) != 3 {
+		t.Errorf("got %d registrations after reopening", len(regs))
 	}
 }

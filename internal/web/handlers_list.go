@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/O5ten/dinners/internal/dinner"
+	"github.com/O5ten/dinners/internal/i18n"
 )
 
 // listKeyPurpose namespaces the capability that opens one evening's list.
@@ -44,8 +45,8 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 	d, ok := world.Schedule.Find(date)
 	if !ok {
-		s.renderError(w, r, http.StatusNotFound, "Ingen middag den dagen",
-			"Kontrollera datumet i länken.")
+		s.errorPage(w, r, http.StatusNotFound,
+			"error.nodinner", "error.nodinner.link")
 		return
 	}
 	sum, err := s.summary(ctx, d)
@@ -57,7 +58,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	v := s.newView(r, role)
 	v.GuestOpen = world.Settings.GuestOpen
 	v.Bare = viaKey && !role.LoggedIn()
-	v.Title = "Matlista " + DateLong(d.Date)
+	v.Title = i18n.T(v.Lang, "list.title") + " " + i18n.DateLong(v.Lang, d.Date)
 	v.Data = map[string]any{
 		"Dinner":  d,
 		"Summary": sum,

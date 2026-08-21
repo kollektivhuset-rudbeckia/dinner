@@ -7,60 +7,120 @@ import (
 	"github.com/O5ten/dinners/internal/store"
 )
 
-func member(email, name string, adults, children, vegans, vegetarians int, note string) store.Registration {
+func member(email, name string, adults, children int, diet store.Diet, note string) store.Registration {
 	return store.Registration{
 		ID: "r-" + email, Date: "2026-08-25", Kind: store.KindMember,
 		Email: email, Name: name, Adults: adults, Children: children,
-		Vegans: vegans, Vegetarians: vegetarians, Note: note,
+		Diet: diet, Note: note,
 	}
 }
 
-func guest(name, host string, adults, children int, note string) store.Registration {
+func guest(name, host string, adults, children int, diet store.Diet, note string) store.Registration {
 	return store.Registration{
 		ID: "g-" + name, Date: "2026-08-25", Kind: store.KindGuest,
-		Name: name, Host: host, Adults: adults, Children: children, Note: note,
+		Name: name, Host: host, Adults: adults, Children: children,
+		Diet: diet, Note: note,
 	}
 }
 
-func standing(email, name string, adults, children, vegans, vegetarians int) store.Standing {
+func standing(email, name string, adults, children int, diet store.Diet) store.Standing {
 	return store.Standing{
 		ID: "s-" + email, Email: email, Weekday: time.Tuesday, Name: name,
-		Adults: adults, Children: children, Vegans: vegans, Vegetarians: vegetarians,
+		Adults: adults, Children: children, Diet: diet,
 	}
 }
 
 func TestResolveAddsUpTheHeadcountAndDiets(t *testing.T) {
 	sum := Resolve(
 		[]store.Registration{
-			member("anna@x.se", "Anna", 2, 2, 0, 1, "glutenfritt för ett barn"),
-			member("bo@x.se", "Bo", 1, 0, 1, 0, ""),
-			guest("Kalle", "Anna", 2, 0, "skaldjursallergi"),
+			member("anna@x.se", "Anna", 2, 2, store.DietOmnivore, "glutenfritt för ett barn"),
+			member("bo@x.se", "Bo", 1, 0, store.DietVegan, ""),
+			member("dan@x.se", "Dan", 2, 0, store.DietFlexitarian, ""),
+			guest("Kalle", "Anna", 2, 0, store.DietPescetarian, "skaldjursallergi"),
 		},
-		[]store.Standing{standing("cecilia@x.se", "Cecilia", 2, 1, 2, 0)},
+		[]store.Standing{standing("cecilia@x.se", "Cecilia", 2, 1, store.DietVegetarian)},
 	)
 
-	if sum.People != 10 {
-		t.Errorf("People = %d, want 10", sum.People)
+	if sum.People != 12 {
+		t.Errorf("People = %d, want 12", sum.People)
 	}
-	if sum.Adults != 7 || sum.Children != 3 {
-		t.Errorf("adults/children = %d/%d, want 7/3", sum.Adults, sum.Children)
+	if sum.Adults != 9 || sum.Children != 3 {
+		t.Errorf("adults/children = %d/%d, want 9/3", sum.Adults, sum.Children)
 	}
-	if sum.Vegans != 3 || sum.Vegetarians != 1 {
-		t.Errorf("vegans/vegetarians = %d/%d, want 3/1", sum.Vegans, sum.Vegetarians)
-	}
-	// Everyone not counted as vegan or vegetarian eats what is served.
-	if sum.Omnivores != 6 {
-		t.Errorf("Omnivores = %d, want 6", sum.Omnivores)
-	}
-	if sum.Households != 4 {
-		t.Errorf("Households = %d, want 4", sum.Households)
+	if sum.Households != 5 {
+		t.Errorf("Households = %d, want 5", sum.Households)
 	}
 	if sum.Guests != 2 {
 		t.Errorf("Guests = %d, want 2", sum.Guests)
 	}
-	// Bo and the standing household wrote nothing, so two notes.
+	// The diet applies to everyone in the registration, so the portions are
+	// the registration's headcount.
+	want := map[store.Diet]int{
+		store.DietOmnivore:    4,
+		store.DietFlexitarian: 2,
+		store.DietPescetarian: 2,
+		store.DietVegetarian:  3,
+		store.DietVegan:       1,
+	}
+	for diet, people := range want {
+		if got := sum.Count(diet); got != people {
+			t.Errorf("%s = %d portions, want %d", diet, got, people)
+		}
+	}
+	// The portions must add up to the headcount, always.
+	total := 0
+	for _, c := range sum.Diets {
+		total += c.People
+	}
+	if total != sum.People {
+		t.Errorf("the diets add up to %d but %d people are coming", total, sum.People)
+	}
+	// Every diet is listed, in the offered order, even at zero.
+	if len(sum.Diets) != len(store.Diets) {
+		t.Fatalf("got %d diet rows, want %d", len(sum.Diets), len(store.Diets))
+	}
+	for i, c := range sum.Diets {
+		if c.Diet != store.Diets[i] {
+			t.Errorf("row %d = %s, want %s", i, c.Diet, store.Diets[i])
+		}
+	}
 	if len(sum.Notes) != 2 {
 		t.Errorf("Notes = %d, want 2", len(sum.Notes))
+	}
+}
+
+// A diet that is missing or from an older build still has to be fed.
+func TestAnUnknownDietIsCountedAsEatingEverything(t *testing.T) {
+	sum := Resolve([]store.Registration{
+		member("a@x.se", "A", 1, 0, "", ""),
+		member("b@x.se", "B", 2, 0, store.Diet("makrobiotisk"), ""),
+	}, nil)
+
+	if got := sum.Count(store.DietOmnivore); got != 3 {
+		t.Errorf("omnivores = %d, want 3", got)
+	}
+	total := 0
+	for _, c := range sum.Diets {
+		total += c.People
+	}
+	if total != 3 {
+		t.Errorf("portions = %d, want 3 — nobody may be dropped", total)
+	}
+}
+
+// Households per diet is what the team counts when laying the table.
+func TestDietsCountHouseholdsAsWellAsPeople(t *testing.T) {
+	sum := Resolve([]store.Registration{
+		member("a@x.se", "A", 2, 0, store.DietVegan, ""),
+		member("b@x.se", "B", 1, 1, store.DietVegan, ""),
+	}, nil)
+	for _, c := range sum.Diets {
+		if c.Diet != store.DietVegan {
+			continue
+		}
+		if c.People != 4 || c.Households != 2 {
+			t.Errorf("vegan = %d people from %d households, want 4 from 2", c.People, c.Households)
+		}
 	}
 }
 
@@ -68,8 +128,8 @@ func TestResolveAddsUpTheHeadcountAndDiets(t *testing.T) {
 // standing one, in both directions.
 func TestRegistrationForTheEveningWinsOverTheStandingOne(t *testing.T) {
 	sum := Resolve(
-		[]store.Registration{member("anna@x.se", "Anna", 1, 0, 0, 0, "")},
-		[]store.Standing{standing("anna@x.se", "Anna", 2, 3, 0, 0)},
+		[]store.Registration{member("anna@x.se", "Anna", 1, 0, store.DietOmnivore, "")},
+		[]store.Standing{standing("anna@x.se", "Anna", 2, 3, store.DietOmnivore)},
 	)
 	if sum.People != 1 {
 		t.Fatalf("People = %d, want 1 — the evening's answer should win", sum.People)
@@ -81,10 +141,10 @@ func TestRegistrationForTheEveningWinsOverTheStandingOne(t *testing.T) {
 
 func TestRegisteringNobodyIsHowYouSkipOneEvening(t *testing.T) {
 	sum := Resolve(
-		[]store.Registration{member("anna@x.se", "Anna", 0, 0, 0, 0, "")},
+		[]store.Registration{member("anna@x.se", "Anna", 0, 0, store.DietOmnivore, "")},
 		[]store.Standing{
-			standing("anna@x.se", "Anna", 2, 2, 0, 0),
-			standing("bo@x.se", "Bo", 1, 0, 0, 0),
+			standing("anna@x.se", "Anna", 2, 2, store.DietOmnivore),
+			standing("bo@x.se", "Bo", 1, 0, store.DietOmnivore),
 		},
 	)
 	if sum.People != 1 {
@@ -105,8 +165,8 @@ func TestRegisteringNobodyIsHowYouSkipOneEvening(t *testing.T) {
 
 func TestStandingHouseholdsAreMarkedAsSuch(t *testing.T) {
 	sum := Resolve(
-		[]store.Registration{member("anna@x.se", "Anna", 1, 0, 0, 0, "")},
-		[]store.Standing{standing("bo@x.se", "Bo", 1, 0, 0, 0)},
+		[]store.Registration{member("anna@x.se", "Anna", 1, 0, store.DietOmnivore, "")},
+		[]store.Standing{standing("bo@x.se", "Bo", 1, 0, store.DietOmnivore)},
 	)
 	byName := map[string]Attendee{}
 	for _, a := range sum.Attendees {
@@ -129,9 +189,9 @@ func TestStandingHouseholdsAreMarkedAsSuch(t *testing.T) {
 func TestAttendeesAreSortedHouseFirstThenByName(t *testing.T) {
 	sum := Resolve(
 		[]store.Registration{
-			guest("Adam", "Cecilia", 1, 0, ""),
-			member("cecilia@x.se", "Cecilia", 1, 0, 0, 0, ""),
-			member("bo@x.se", "bo", 1, 0, 0, 0, ""),
+			guest("Adam", "Cecilia", 1, 0, store.DietOmnivore, ""),
+			member("cecilia@x.se", "Cecilia", 1, 0, store.DietOmnivore, ""),
+			member("bo@x.se", "bo", 1, 0, store.DietOmnivore, ""),
 		},
 		nil,
 	)
@@ -144,19 +204,6 @@ func TestAttendeesAreSortedHouseFirstThenByName(t *testing.T) {
 		if order[i] != want[i] {
 			t.Fatalf("order = %v, want %v", order, want)
 		}
-	}
-}
-
-// More vegans than people is rejected in the form, but a summary must never
-// report a negative number of omnivores whatever is in the database.
-func TestOmnivoresNeverGoNegative(t *testing.T) {
-	sum := Resolve([]store.Registration{member("a@x.se", "A", 1, 0, 5, 5, "")}, nil)
-	if sum.Omnivores != 0 {
-		t.Errorf("Omnivores = %d, want 0", sum.Omnivores)
-	}
-	a := Attendee{Adults: 1, Vegans: 5}
-	if a.Omnivores() != 0 {
-		t.Errorf("Attendee.Omnivores = %d, want 0", a.Omnivores())
 	}
 }
 

@@ -36,36 +36,25 @@
 		});
 	});
 
-	// --- Live arithmetic on the count fields --------------------------------
-	// Saying "3 of you eat everything" as the numbers are typed catches the
-	// common mistake — more vegans than people — before the server has to.
+	// --- Live headcount on the registration forms ---------------------------
+	// Saying the total back catches the commonest slip — leaving both boxes at
+	// zero and expecting to be counted.
 	document.querySelectorAll('[data-count-group]').forEach(function (group) {
 		var hint = group.querySelector('[data-count-hint]');
 		if (!hint) { return; }
-		var read = function (selector) {
-			var total = 0;
-			group.querySelectorAll(selector).forEach(function (input) {
-				var n = parseInt(input.value, 10);
-				if (!isNaN(n) && n > 0) { total += n; }
-			});
-			return total;
-		};
 		var update = function () {
-			var people = read('[data-count="people"]');
-			var diet = read('[data-count="diet"]');
-			hint.classList.remove('is-bad');
+			var people = 0;
+			group.querySelectorAll('[data-count="people"]').forEach(function (input) {
+				var n = parseInt(input.value, 10);
+				if (!isNaN(n) && n > 0) { people += n; }
+			});
 			if (people === 0) {
 				hint.textContent = group.getAttribute('data-count-zero') || 'Ingen anmäld.';
-			} else if (diet > people) {
-				hint.textContent = 'Det är fler veganer och vegetarianer än ni är personer.';
-				hint.classList.add('is-bad');
 			} else {
-				var rest = people - diet;
-				hint.textContent = people + (people === 1 ? ' person' : ' personer') +
-					', varav ' + rest + (rest === 1 ? ' äter' : ' äter') + ' allt.';
+				hint.textContent = people + (people === 1 ? ' person' : ' personer') + '.';
 			}
 		};
-		group.querySelectorAll('[data-count]').forEach(function (input) {
+		group.querySelectorAll('[data-count="people"]').forEach(function (input) {
 			input.addEventListener('input', update);
 		});
 		update();

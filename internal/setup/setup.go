@@ -62,14 +62,13 @@ func Bootstrap(ctx context.Context, st *store.Store, cfg *config.Config) (bool, 
 
 // household is a made-up neighbour who eats with the others.
 type household struct {
-	Name        string
-	Apartment   string
-	Email       string
-	Adults      int
-	Children    int
-	Vegans      int
-	Vegetarians int
-	Note        string
+	Name      string
+	Apartment string
+	Email     string
+	Adults    int
+	Children  int
+	Diet      store.Diet
+	Note      string
 	// Standing says which evenings this household eats by default: an empty
 	// list means they answer one dinner at a time.
 	Standing []time.Weekday
@@ -79,38 +78,45 @@ type household struct {
 // so nothing can accidentally be mailed to a real person.
 var households = []household{
 	{Name: "Anna Andersson", Apartment: "1403", Email: "anna@example.com",
-		Adults: 2, Children: 2, Note: "ett barn tål inte gluten",
+		Adults: 2, Children: 2, Diet: store.DietOmnivore,
+		Note:     "ett barn tål inte gluten",
 		Standing: []time.Weekday{time.Tuesday, time.Thursday}},
 	{Name: "Bo Bengtsson", Apartment: "0702", Email: "bo@example.com",
-		Adults: 1, Vegetarians: 1,
+		Adults: 1, Diet: store.DietVegetarian,
 		Standing: []time.Weekday{time.Tuesday}},
 	{Name: "Cecilia Dahl", Apartment: "1201", Email: "cecilia@example.com",
-		Adults: 2, Children: 1, Vegans: 2, Note: "inga nötter, tack",
+		Adults: 2, Children: 1, Diet: store.DietVegan,
+		Note:     "inga nötter, tack",
 		Standing: []time.Weekday{time.Thursday}},
-	{Name: "David Ek", Apartment: "0304", Email: "david@example.com", Adults: 1},
+	{Name: "David Ek", Apartment: "0304", Email: "david@example.com",
+		Adults: 1, Diet: store.DietPescetarian},
 	{Name: "Elin Forsberg", Apartment: "0508", Email: "elin@example.com",
-		Adults: 2, Children: 3, Vegetarians: 2,
+		Adults: 2, Children: 3, Diet: store.DietVegetarian,
 		Standing: []time.Weekday{time.Tuesday, time.Thursday}},
 	{Name: "Farid Hassan", Apartment: "1105", Email: "farid@example.com",
-		Adults: 2, Note: "fläskfritt"},
+		Adults: 2, Diet: store.DietFlexitarian, Note: "fläskfritt"},
 	{Name: "Greta Lind", Apartment: "0601", Email: "greta@example.com",
-		Adults: 1, Vegans: 1, Standing: []time.Weekday{time.Thursday}},
+		Adults: 1, Diet: store.DietVegan,
+		Standing: []time.Weekday{time.Thursday}},
 	{Name: "Hugo Nyström", Apartment: "0907", Email: "hugo@example.com",
-		Adults: 2, Children: 1},
-	{Name: "Ingrid Palm", Apartment: "1302", Email: "ingrid@example.com", Adults: 1},
+		Adults: 2, Children: 1, Diet: store.DietOmnivore},
+	{Name: "Ingrid Palm", Apartment: "1302", Email: "ingrid@example.com",
+		Adults: 1, Diet: store.DietFlexitarian},
 	{Name: "Jonas Rehn", Apartment: "0203", Email: "jonas@example.com",
-		Adults: 2, Children: 2, Note: "laktosfritt för en vuxen"},
+		Adults: 2, Children: 2, Diet: store.DietOmnivore,
+		Note: "laktosfritt för en vuxen"},
 }
 
 var guests = []struct {
 	Name string
 	Host string
+	Diet store.Diet
 	Note string
 }{
-	{"Kalle Svensson", "Anna Andersson", ""},
-	{"Maja Öberg", "David Ek", "vegetarian"},
-	{"Petra Lund", "Elin Forsberg", ""},
-	{"Sam Ali", "Hugo Nyström", "allergisk mot skaldjur"},
+	{"Kalle Svensson", "Anna Andersson", store.DietOmnivore, ""},
+	{"Maja Öberg", "David Ek", store.DietVegetarian, ""},
+	{"Petra Lund", "Elin Forsberg", store.DietFlexitarian, ""},
+	{"Sam Ali", "Hugo Nyström", store.DietPescetarian, "allergisk mot skaldjur"},
 }
 
 var demoTeams = []config.Team{
@@ -182,7 +188,7 @@ func Demo(ctx context.Context, st *store.Store, cfg *config.Config, now time.Tim
 			if err := st.SaveStanding(ctx, store.Standing{
 				ID: auth.ID(), Email: h.Email, Weekday: wd, Name: h.Name,
 				Apartment: h.Apartment, Adults: h.Adults, Children: h.Children,
-				Vegans: h.Vegans, Vegetarians: h.Vegetarians, Note: h.Note,
+				Diet: h.Diet, Note: h.Note,
 				UpdatedAt: now,
 			}); err != nil {
 				return 0, err
@@ -230,7 +236,8 @@ func Demo(ctx context.Context, st *store.Store, cfg *config.Config, now time.Tim
 			g := guests[(step/7)%len(guests)]
 			if err := st.SaveRegistration(ctx, store.Registration{
 				ID: auth.ID(), Date: key, Kind: store.KindGuest,
-				Name: g.Name, Host: g.Host, Adults: 1, Note: g.Note,
+				Name: g.Name, Host: g.Host, Adults: 1,
+				Diet: g.Diet, Note: g.Note,
 				Token: auth.Token(), CreatedAt: now, UpdatedAt: now,
 			}); err != nil {
 				return n, err
@@ -287,7 +294,7 @@ func saveReg(ctx context.Context, st *store.Store, date string, h household, now
 		Token: auth.Token(), CreatedAt: now, UpdatedAt: now,
 	}
 	if adults+children > 0 {
-		r.Vegans, r.Vegetarians, r.Note = h.Vegans, h.Vegetarians, h.Note
+		r.Diet, r.Note = h.Diet, h.Note
 	}
 	return st.SaveRegistration(ctx, r)
 }

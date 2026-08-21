@@ -4,37 +4,44 @@
 {{define "countfields"}}
 {{$f := .Form}}{{$id := .ID}}
 {{/* Zero is what to say when nobody is filled in; it means something
-     different on a standing registration than on one evening's form. */}}
+     different on a standing registration than on one evening's form. Split is
+     what to do when the party does not all eat the same thing, which differs
+     too: a guest can simply register twice, a household cannot. */}}
 <div class="count-group" data-count-group
-     data-count-zero="{{if .Zero}}{{.Zero}}{{else}}Ingen anmäld.{{end}}">
-	<div class="count-grid">
+     data-count-zero="{{if .Zero}}{{.Zero}}{{else}}{{t "form.nobody"}}{{end}}">
+	<div class="count-grid count-grid-two">
 		<div class="field count">
-			<label for="{{$id}}-adults">Vuxna</label>
+			<label for="{{$id}}-adults">{{t "form.adults"}}</label>
 			<input id="{{$id}}-adults" name="adults" type="number" inputmode="numeric"
 			       min="0" max="20" step="1" value="{{$f.Adults}}" data-count="people">
 		</div>
 		<div class="field count">
-			<label for="{{$id}}-children">Barn</label>
+			<label for="{{$id}}-children">{{t "form.children"}}</label>
 			<input id="{{$id}}-children" name="children" type="number" inputmode="numeric"
 			       min="0" max="20" step="1" value="{{$f.Children}}" data-count="people">
 		</div>
-		<div class="field count">
-			<label for="{{$id}}-vegans">Varav veganer</label>
-			<input id="{{$id}}-vegans" name="vegans" type="number" inputmode="numeric"
-			       min="0" max="40" step="1" value="{{$f.Vegans}}" data-count="diet">
-		</div>
-		<div class="field count">
-			<label for="{{$id}}-vegetarians">Varav vegetarianer</label>
-			<input id="{{$id}}-vegetarians" name="vegetarians" type="number" inputmode="numeric"
-			       min="0" max="40" step="1" value="{{$f.Vegetarians}}" data-count="diet">
-		</div>
 	</div>
 	<p class="hint count-hint" data-count-hint aria-live="polite"></p>
+
+	<fieldset class="diet">
+		<legend>{{t "form.diet"}}</legend>
+		{{range diets}}
+		<label class="diet-option">
+			<input type="radio" name="diet" value="{{.}}" {{if eq . $f.Diet}}checked{{end}}>
+			<span class="diet-text">
+				<strong>{{dietLabel .}}</strong>
+				<small>{{dietHint .}}</small>
+			</span>
+		</label>
+		{{end}}
+		{{with .Split}}<p class="hint">{{.}}</p>{{end}}
+	</fieldset>
+
 	<div class="field">
-		<label for="{{$id}}-note">Specialkost eller allergier <small>frivilligt</small></label>
+		<label for="{{$id}}-note">{{t "form.note"}} <small>{{t "optional"}}</small></label>
 		<input id="{{$id}}-note" name="note" type="text" maxlength="300"
-		       value="{{$f.Note}}" placeholder="T.ex. glutenfritt för ett barn, nötallergi">
-		<small class="hint">Syns för matlaget på matlistan. Skriv inget du inte vill att huset läser.</small>
+		       value="{{$f.Note}}" placeholder="{{t "form.note.placeholder"}}">
+		<small class="hint">{{t "form.note.hint"}}</small>
 	</div>
 </div>
 {{end}}
@@ -45,33 +52,39 @@
 	<span class="attendee-name">
 		{{.Name}}
 		{{if .Apartment}}<small class="muted">{{.Apartment}}</small>{{end}}
-		{{if .Guest}}<span class="chip chip-guest">gäst{{if .Host}} hos {{.Host}}{{end}}</span>{{end}}
-		{{if .Standing}}<span class="chip" title="Kommer på sin stående anmälan">stående</span>{{end}}
+		{{if .Guest}}<span class="chip chip-guest">{{if .Host}}{{t "attendee.guest.of" .Host}}{{else}}{{t "attendee.guest"}}{{end}}</span>{{end}}
+		{{if .Standing}}<span class="chip" title="{{t "attendee.standing.title"}}">{{t "attendee.standing"}}</span>{{end}}
 	</span>
 	<span class="attendee-counts">
-		{{if .Adults}}{{count .Adults "vuxen" "vuxna"}}{{end}}
+		{{if .Adults}}{{count "adult" .Adults}}{{end}}
 		{{if and .Adults .Children}} · {{end}}
-		{{if .Children}}{{count .Children "barn" "barn"}}{{end}}
+		{{if .Children}}{{count "child" .Children}}{{end}}
 	</span>
 	<span class="attendee-diet">
-		{{if .Vegans}}<span class="chip chip-vegan">{{.Vegans}} vegan</span>{{end}}
-		{{if .Vegetarians}}<span class="chip chip-veg">{{.Vegetarians}} veg</span>{{end}}
+		<span class="chip chip-diet chip-{{.Diet}}">{{dietLabel .Diet}}</span>
 	</span>
 	{{if .Note}}<span class="attendee-note">{{.Note}}</span>{{end}}
 </li>
 {{end}}
 
-{{/* The four headline numbers the cooking team actually cooks from. */}}
+{{/* The numbers the cooking team actually cooks from: how many people, and
+     how many portions of each meal. Every diet is listed even at zero, so a
+     missing pot is visible rather than merely absent. */}}
 {{define "totals"}}
 <div class="stats">
 	<div class="stat stat-big">
 		<strong>{{.People}}</strong>
-		<span>{{plural .People "person" "personer"}}</span>
+		<span>{{plural "person" .People}}</span>
 	</div>
-	<div class="stat"><strong>{{.Adults}}</strong><span>{{plural .Adults "vuxen" "vuxna"}}</span></div>
-	<div class="stat"><strong>{{.Children}}</strong><span>barn</span></div>
-	<div class="stat stat-diet"><strong>{{.Omnivores}}</strong><span>äter allt</span></div>
-	<div class="stat stat-diet"><strong>{{.Vegetarians}}</strong><span>vegetariskt</span></div>
-	<div class="stat stat-diet"><strong>{{.Vegans}}</strong><span>veganskt</span></div>
+	<div class="stat"><strong>{{.Adults}}</strong><span>{{plural "adult" .Adults}}</span></div>
+	<div class="stat"><strong>{{.Children}}</strong><span>{{plural "child" .Children}}</span></div>
+</div>
+<div class="stats stats-diet">
+	{{range .Diets}}
+	<div class="stat stat-diet{{if not .People}} is-none{{end}}">
+		<strong>{{.People}}</strong>
+		<span>{{dietLabel .Diet}}</span>
+	</div>
+	{{end}}
 </div>
 {{end}}

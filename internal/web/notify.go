@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/O5ten/dinners/internal/dinner"
+	"github.com/O5ten/dinners/internal/i18n"
 	"github.com/O5ten/dinners/internal/mail"
 )
 
@@ -82,52 +83,50 @@ func (s *Server) sendList(ctx context.Context, d dinner.Dinner) error {
 		return fmt.Errorf("record notification: %w", err)
 	}
 
+	// The mail goes to whoever leads the team, and we have no way of knowing
+	// which language their browser is set to — so it follows the deployment's
+	// own language, the one the house chose.
+	lang := s.defaultLang()
 	loc := s.cfg.Location()
-	when := DateLong(d.Date.In(loc))
+	when := i18n.DateLong(lang, d.Date.In(loc))
 	link := s.listURL(d)
 	greeting := firstName(d.Team.LeaderName)
 	if greeting == "" {
 		greeting = d.Team.Name
+	}
+	served := i18n.T(lang, "mail.served", i18n.Clock(d.Serving))
+	if s.cfg.Dinner.Location != "" {
+		served = i18n.T(lang, "mail.served.in", i18n.Clock(d.Serving), s.cfg.Dinner.Location)
 	}
 
 	// The mail deliberately carries no names, numbers or diets. Those live on
 	// the list, behind the link: one place to look, always current, and
 	// nothing sensitive sitting in a mailbox.
 	var text bytes.Buffer
-	fmt.Fprintf(&text, "Hej %s!\n\n", greeting)
-	fmt.Fprintf(&text, "Anmälan till middagen %s är stängd och matlistan är klar.\n\n", when)
+	fmt.Fprintf(&text, "%s\n\n", i18n.T(lang, "mail.greeting", greeting))
+	fmt.Fprintf(&text, "%s\n\n", i18n.T(lang, "mail.closed", when))
 	fmt.Fprintf(&text, "  %s\n\n", link)
-	text.WriteString("På sidan ser du hur många vuxna och barn som kommer, hur många\n")
-	text.WriteString("som äter veganskt respektive vegetariskt, och vilka specialkoster\n")
-	text.WriteString("som anmälts. Den går att skriva ut.\n\n")
-	if s.cfg.Dinner.Location != "" {
-		fmt.Fprintf(&text, "Maten serveras %s i %s.\n\n",
-			Clock(d.Serving), s.cfg.Dinner.Location)
-	} else {
-		fmt.Fprintf(&text, "Maten serveras %s.\n\n", Clock(d.Serving))
-	}
-	fmt.Fprintf(&text, "Hälsningar,\n%s\n", s.cfg.Site.Title)
+	fmt.Fprintf(&text, "%s\n\n", i18n.T(lang, "mail.whatsthere"))
+	fmt.Fprintf(&text, "%s\n\n", served)
+	fmt.Fprintf(&text, "%s\n%s\n", i18n.T(lang, "mail.regards"), s.cfg.Site.Title)
 
 	var body bytes.Buffer
-	fmt.Fprintf(&body, `<p>Hej %s!</p>
-<p>Anmälan till middagen <strong>%s</strong> är stängd och matlistan är klar.</p>
-<p><a href="%s" style="display:inline-block;background:#ad8301;color:#fffcf0;padding:10px 18px;border-radius:6px;text-decoration:none">Öppna matlistan</a></p>
-<p>På sidan ser du hur många vuxna och barn som kommer, hur många som äter
-veganskt respektive vegetariskt, och vilka specialkoster som anmälts.
-Den går att skriva ut.</p>`,
-		html.EscapeString(greeting), html.EscapeString(when), link)
-	if s.cfg.Dinner.Location != "" {
-		fmt.Fprintf(&body, `<p style="color:#6f6e69">Maten serveras %s i %s.</p>`,
-			Clock(d.Serving), html.EscapeString(s.cfg.Dinner.Location))
-	} else {
-		fmt.Fprintf(&body, `<p style="color:#6f6e69">Maten serveras %s.</p>`, Clock(d.Serving))
-	}
+	fmt.Fprintf(&body, `<p>%s</p>
+<p>%s</p>
+<p><a href="%s" style="display:inline-block;background:#ad8301;color:#fffcf0;padding:10px 18px;border-radius:6px;text-decoration:none">%s</a></p>
+<p>%s</p>`,
+		html.EscapeString(i18n.T(lang, "mail.greeting", greeting)),
+		html.EscapeString(i18n.T(lang, "mail.closed", when)),
+		link,
+		html.EscapeString(i18n.T(lang, "mail.open")),
+		html.EscapeString(i18n.T(lang, "mail.whatsthere")))
+	fmt.Fprintf(&body, `<p style="color:#6f6e69">%s</p>`, html.EscapeString(served))
 	fmt.Fprintf(&body, `<p style="color:#6f6e69;font-size:13px">%s</p>`,
 		html.EscapeString(s.cfg.Site.Title))
 
 	msg := mail.Message{
 		To:      []string{d.Team.LeaderEmail},
-		Subject: fmt.Sprintf("Matlista: %s", when),
+		Subject: i18n.T(lang, "mail.subject", when),
 		Text:    text.String(),
 		HTML:    wrapHTML(s.cfg.Site.Title, body.String()),
 	}

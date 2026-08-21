@@ -7,6 +7,7 @@ import (
 
 	"github.com/O5ten/dinners/internal/auth"
 	"github.com/O5ten/dinners/internal/dinner"
+	"github.com/O5ten/dinners/internal/i18n"
 	"github.com/O5ten/dinners/internal/store"
 )
 
@@ -16,20 +17,19 @@ import (
 
 // guestForm is what a visitor fills in.
 type guestForm struct {
-	Date        string
-	Name        string
-	Host        string
-	Email       string
-	Adults      int
-	Children    int
-	Vegans      int
-	Vegetarians int
-	Note        string
+	Date     string
+	Name     string
+	Host     string
+	Email    string
+	Adults   int
+	Children int
+	Diet     store.Diet
+	Note     string
 }
 
 func (s *Server) guestView(r *http.Request) *view {
 	v := s.newView(r, s.guard.Role(r))
-	v.Title = "Anmäl dig till middag"
+	v.Title = i18n.T(v.Lang, "guest.title")
 	return v
 }
 
@@ -54,14 +54,16 @@ func (s *Server) handleGuestForm(w http.ResponseWriter, r *http.Request) {
 	v := s.guestView(r)
 	v.GuestOpen = world.Settings.GuestOpen
 	if !world.Settings.GuestOpen {
-		s.renderError(w, r, http.StatusNotFound, "Gästanmälan är stängd",
-			"Be den du ska hälsa på att anmäla dig i stället.")
+		s.errorPage(w, r, http.StatusNotFound,
+			"error.guest.closed", "error.guest.closed.detail")
 		return
 	}
 	open := openDinners(world, v)
 	v.Data = map[string]any{
 		"Dinners": open,
-		"Form":    guestForm{Adults: 1, Date: r.URL.Query().Get("datum")},
+		"Form": guestForm{
+			Adults: 1, Diet: store.DietOmnivore, Date: r.URL.Query().Get("datum"),
+		},
 	}
 	s.render(w, r, http.StatusOK, "guest.html", v)
 }
@@ -76,12 +78,13 @@ func (s *Server) handleGuestSave(w http.ResponseWriter, r *http.Request) {
 	v := s.guestView(r)
 	v.GuestOpen = world.Settings.GuestOpen
 	if !world.Settings.GuestOpen {
-		s.renderError(w, r, http.StatusNotFound, "Gästanmälan är stängd",
-			"Be den du ska hälsa på att anmäla dig i stället.")
+		s.errorPage(w, r, http.StatusNotFound,
+			"error.guest.closed", "error.guest.closed.detail")
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		s.renderError(w, r, http.StatusBadRequest, "Formuläret kunde inte läsas", "Försök igen.")
+		s.errorPage(w, r, http.StatusBadRequest,
+			"error.form", "error.form.detail")
 		return
 	}
 
@@ -94,8 +97,7 @@ func (s *Server) handleGuestSave(w http.ResponseWriter, r *http.Request) {
 		Host:   strings.TrimSpace(r.FormValue("host")),
 		Email:  auth.NormalizeEmail(r.FormValue("email")),
 		Adults: counts.Adults, Children: counts.Children,
-		Vegans: counts.Vegans, Vegetarians: counts.Vegetarians,
-		Note: counts.Note,
+		Diet: counts.Diet, Note: counts.Note,
 	}
 
 	reject := func(problem string, status int) {
@@ -104,29 +106,29 @@ func (s *Server) handleGuestSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !guestThrottle.allow(ip, now) {
-		reject("Det har kommit många anmälningar härifrån just nu. Vänta en kvart och prova igen.", http.StatusTooManyRequests)
+		reject(i18n.T(v.Lang, "guest.throttled"), http.StatusTooManyRequests)
 		return
 	}
 
 	d, ok := world.Schedule.Find(form.Date)
 	switch {
 	case !ok:
-		reject("Välj vilken middag du vill komma på.", http.StatusUnprocessableEntity)
+		reject(i18n.T(v.Lang, "guest.pickdinner"), http.StatusUnprocessableEntity)
 		return
 	case !d.Open(v.Now):
-		reject("Anmälan för den middagen är stängd. Välj en senare kväll.", http.StatusUnprocessableEntity)
+		reject(i18n.T(v.Lang, "guest.closed"), http.StatusUnprocessableEntity)
 		return
 	case form.Name == "":
-		reject("Skriv ditt namn, så vet matlaget vem du är.", http.StatusUnprocessableEntity)
+		reject(i18n.T(v.Lang, "guest.needname"), http.StatusUnprocessableEntity)
 		return
 	case form.Email != "" && !auth.ValidEmail(form.Email):
-		reject("E-postadressen ser inte riktig ut. Du kan också lämna den tom.", http.StatusUnprocessableEntity)
+		reject(i18n.T(v.Lang, "guest.bademail"), http.StatusUnprocessableEntity)
 		return
 	case counts.Adults+counts.Children <= 0:
-		reject("Anmäl minst en person.", http.StatusUnprocessableEntity)
+		reject(i18n.T(v.Lang, "guest.atleastone"), http.StatusUnprocessableEntity)
 		return
 	}
-	if problem := validateCounts(counts); problem != "" {
+	if problem := validateParty(v.Lang, counts); problem != "" {
 		reject(problem, http.StatusUnprocessableEntity)
 		return
 	}
@@ -141,7 +143,7 @@ func (s *Server) handleGuestSave(w http.ResponseWriter, r *http.Request) {
 		Name:   form.Name,
 		Host:   form.Host,
 		Adults: form.Adults, Children: form.Children,
-		Vegans: form.Vegans, Vegetarians: form.Vegetarians,
+		Diet:      form.Diet,
 		Note:      form.Note,
 		Token:     token,
 		CreatedAt: now, UpdatedAt: now,
@@ -162,8 +164,8 @@ func (s *Server) handleGuestEdit(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reg, err := s.store.RegistrationByToken(ctx, r.PathValue("token"))
 	if errors.Is(err, store.ErrNotFound) {
-		s.renderError(w, r, http.StatusNotFound, "Anmälan hittades inte",
-			"Länken kan vara gammal. Gör en ny anmälan i stället.")
+		s.errorPage(w, r, http.StatusNotFound,
+			"error.reg.notfound", "error.reg.notfound.detail")
 		return
 	}
 	if err != nil {
@@ -179,11 +181,11 @@ func (s *Server) handleGuestEdit(w http.ResponseWriter, r *http.Request) {
 	v.GuestOpen = world.Settings.GuestOpen
 	d, ok := world.Schedule.Find(reg.Date)
 	if !ok {
-		s.renderError(w, r, http.StatusNotFound, "Middagen finns inte längre",
-			"Kvällen har tagits bort ur schemat.")
+		s.errorPage(w, r, http.StatusNotFound,
+			"error.dinner.gone", "error.dinner.gone.detail")
 		return
 	}
-	v.Title = "Din anmälan"
+	v.Title = i18n.T(v.Lang, "guest.yours")
 	v.Data = map[string]any{
 		"Dinner": d,
 		"Token":  reg.Token,
@@ -192,7 +194,7 @@ func (s *Server) handleGuestEdit(w http.ResponseWriter, r *http.Request) {
 		"Form": guestForm{
 			Date: reg.Date, Name: reg.Name, Host: reg.Host, Email: reg.Email,
 			Adults: reg.Adults, Children: reg.Children,
-			Vegans: reg.Vegans, Vegetarians: reg.Vegetarians, Note: reg.Note,
+			Diet: reg.Diet, Note: reg.Note,
 		},
 	}
 	s.render(w, r, http.StatusOK, "guest.html", v)
@@ -202,8 +204,8 @@ func (s *Server) handleGuestUpdate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reg, err := s.store.RegistrationByToken(ctx, r.PathValue("token"))
 	if errors.Is(err, store.ErrNotFound) {
-		s.renderError(w, r, http.StatusNotFound, "Anmälan hittades inte",
-			"Länken kan vara gammal. Gör en ny anmälan i stället.")
+		s.errorPage(w, r, http.StatusNotFound,
+			"error.reg.notfound", "error.reg.notfound.detail")
 		return
 	}
 	if err != nil {
@@ -211,7 +213,8 @@ func (s *Server) handleGuestUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		s.renderError(w, r, http.StatusBadRequest, "Formuläret kunde inte läsas", "Försök igen.")
+		s.errorPage(w, r, http.StatusBadRequest,
+			"error.form", "error.form.detail")
 		return
 	}
 	world, err := s.world(ctx)
@@ -223,8 +226,8 @@ func (s *Server) handleGuestUpdate(w http.ResponseWriter, r *http.Request) {
 	v.GuestOpen = world.Settings.GuestOpen
 	d, ok := world.Schedule.Find(reg.Date)
 	if !ok || !d.Open(v.Now) {
-		s.renderError(w, r, http.StatusConflict, "Anmälan är stängd",
-			"Matlaget har redan fått listan. Hör av dig till den du ska hälsa på.")
+		s.errorPage(w, r, http.StatusConflict,
+			"error.reg.closed", "error.reg.closed.detail")
 		return
 	}
 
@@ -234,7 +237,7 @@ func (s *Server) handleGuestUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.log.Info("guest registration withdrawn", "date", reg.Date)
-		v.Title = "Anmälan borttagen"
+		v.Title = i18n.T(v.Lang, "guest.removed")
 		v.Data = map[string]any{"Dinner": d, "Removed": true}
 		s.render(w, r, http.StatusOK, "guest.html", v)
 		return
@@ -247,34 +250,33 @@ func (s *Server) handleGuestUpdate(w http.ResponseWriter, r *http.Request) {
 		Host:   strings.TrimSpace(r.FormValue("host")),
 		Email:  auth.NormalizeEmail(r.FormValue("email")),
 		Adults: counts.Adults, Children: counts.Children,
-		Vegans: counts.Vegans, Vegetarians: counts.Vegetarians,
-		Note: counts.Note,
+		Diet: counts.Diet, Note: counts.Note,
 	}
 	reject := func(problem string) {
-		v.Title = "Din anmälan"
+		v.Title = i18n.T(v.Lang, "guest.yours")
 		v.Data = map[string]any{"Dinner": d, "Token": reg.Token, "Open": true,
 			"Form": form, "Error": problem}
 		s.render(w, r, http.StatusUnprocessableEntity, "guest.html", v)
 	}
 	switch {
 	case form.Name == "":
-		reject("Skriv ditt namn, så vet matlaget vem du är.")
+		reject(i18n.T(v.Lang, "guest.needname"))
 		return
 	case form.Email != "" && !auth.ValidEmail(form.Email):
-		reject("E-postadressen ser inte riktig ut. Du kan också lämna den tom.")
+		reject(i18n.T(v.Lang, "guest.bademail"))
 		return
 	case counts.Adults+counts.Children <= 0:
-		reject("Anmäl minst en person, eller ta bort anmälan helt.")
+		reject(i18n.T(v.Lang, "guest.atleastone.or"))
 		return
 	}
-	if problem := validateCounts(counts); problem != "" {
+	if problem := validateParty(v.Lang, counts); problem != "" {
 		reject(problem)
 		return
 	}
 
 	reg.Name, reg.Host, reg.Email = form.Name, form.Host, form.Email
 	reg.Adults, reg.Children = form.Adults, form.Children
-	reg.Vegans, reg.Vegetarians = form.Vegans, form.Vegetarians
+	reg.Diet = form.Diet
 	reg.Note, reg.UpdatedAt = form.Note, s.now()
 	if err := s.store.SaveRegistration(ctx, reg); err != nil {
 		s.fail(w, r, "update guest registration", err)
