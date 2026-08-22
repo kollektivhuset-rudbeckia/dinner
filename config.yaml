@@ -20,7 +20,7 @@ site:
 dinner:
   # Vilka kvällar huset äter tillsammans. Används som förval för nya säsonger.
   weekdays: [tisdag, torsdag]
-  serving_time: "18:00"
+  serving_time: "17:30"
   location: stora matsalen
   # Husets egna ord högst upp på gästsidan, i stället för de inbyggda. Sätter
   # du den ena, sätt den andra också — en sida som byter till engelska och

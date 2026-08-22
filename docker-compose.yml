@@ -4,7 +4,7 @@ services:
     container_name: dinners-rudbeckia
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "8099:8080"
     environment:
       # --- Required ---------------------------------------------------------
       DINNER_PASSWORD: ${DINNER_PASSWORD:?set DINNER_PASSWORD in .env}
@@ -24,6 +24,7 @@ services:
       # log, and the list is still on the site.
       MATTERMOST_URL: ${MATTERMOST_URL:-}
       MATTERMOST_TOKEN: ${MATTERMOST_TOKEN:-}
+    env_file: .env
     volumes:
       - dinners-data:/data
       # Mount your own house settings over the ones baked into the image.
