@@ -769,3 +769,86 @@ func TestMigrationFromTheOldDietCounts(t *testing.T) {
 		t.Errorf("got %d registrations after reopening", len(regs))
 	}
 }
+
+// A database from before the Mattermost switch has cooking teams with an
+// e-mail address and no username. The teams have to survive the upgrade — and
+// the address has to go, because nothing can be sent to it any more.
+func TestMigrationFromTheTeamLeaderAddresses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	old, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.Exec(`
+		CREATE TABLE teams (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			name         TEXT NOT NULL,
+			leader_name  TEXT NOT NULL DEFAULT '',
+			leader_email TEXT NOT NULL DEFAULT '',
+			position     INTEGER NOT NULL DEFAULT 0,
+			active       INTEGER NOT NULL DEFAULT 1
+		);
+		INSERT INTO teams (name, leader_name, leader_email, position, active)
+		VALUES ('Lag 1', 'Anna Andersson', 'anna@example.se', 0, 1),
+		       ('Lag 2', 'Bo Bengtsson',   'bo@example.se',   1, 0);
+	`); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("opening an old database: %v", err)
+	}
+	defer st.Close()
+
+	ctx := context.Background()
+	teams, err := st.Teams(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(teams) != 2 {
+		t.Fatalf("got %d teams after the upgrade, want 2", len(teams))
+	}
+	if teams[0].Name != "Lag 1" || teams[0].LeaderName != "Anna Andersson" || !teams[0].Active {
+		t.Errorf("first team = %+v", teams[0])
+	}
+	// Nobody has said which account Anna is, so there is nobody to tell yet.
+	if teams[0].LeaderUsername != "" {
+		t.Errorf("LeaderUsername = %q, want it empty until an administrator fills it in",
+			teams[0].LeaderUsername)
+	}
+	if teams[1].Active {
+		t.Error("the second team was switched off and should have stayed off")
+	}
+
+	// The addresses are gone rather than sitting in the table unused.
+	var n int
+	if err := st.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pragma_table_info('teams') WHERE name = 'leader_email'`).
+		Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Error("leader_email is still in the teams table")
+	}
+
+	// Saving a username works, and reopening is a no-op rather than a second
+	// migration.
+	if _, err := st.SaveTeam(ctx, Team{
+		ID: teams[0].ID, Name: "Lag 1", LeaderName: "Anna Andersson",
+		LeaderUsername: "anna.andersson", Active: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	again, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopening: %v", err)
+	}
+	defer again.Close()
+	teams, _ = again.Teams(ctx)
+	if len(teams) != 2 || teams[0].LeaderUsername != "anna.andersson" {
+		t.Errorf("teams after reopening = %+v", teams)
+	}
+}

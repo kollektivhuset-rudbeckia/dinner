@@ -78,9 +78,45 @@ Alla vardagskommandon finns i `Makefile` — kör `make` för att se dem.
 ### Första starten
 
 Startar servern mot en tom databas läser den `config.yaml` och lägger in
-matlagen och säsongen som står där. Det är bara ett utgångsläge: därefter är
-det administrationssidan som äger dem, och en senare ändring i `config.yaml`
-rör inte det matgruppen har skrivit.
+matlagen och säsongen som står där. Lagledarnas namn slås samtidigt upp i
+Mattermost, så att schemat kan skriva ut dem utan att fråga chatten varje gång
+någon läser en sida. Det är bara ett utgångsläge: därefter är det
+administrationssidan som äger dem, och en senare ändring i `config.yaml` rör
+inte det matgruppen har skrivit.
+
+---
+
+## Boten i Mattermost
+
+Matlistan skickas som ett direktmeddelande från ett bot-konto i husets
+Mattermost, och samma konto används för att slå upp vilka som finns i huset när
+matgruppen fyller i vem som är lagledare. Så här kopplar du in det:
+
+1. I Mattermost: **System Console → Integrations → Bot Accounts**, slå på dem.
+2. **Integrations → Bot Accounts → Add Bot Account**. Kalla den `dinner`.
+3. Kopiera token som visas *en gång* och lägg den i `.env` som
+   `MATTERMOST_TOKEN`. Sätt `MATTERMOST_URL` till husets adress.
+4. Boten behöver få slå upp användare och skicka direktmeddelanden. Ett vanligt
+   bot-konto räcker; den behöver inte vara systemadministratör.
+5. Starta om: `docker compose up -d`. Loggen säger `mattermost bot ready` med
+   botens användarnamn om token fungerar, och servern vägrar starta om den inte
+   gör det.
+
+```bash
+# .env
+MATTERMOST_URL=https://chat.rudbeckia.nu
+MATTERMOST_TOKEN=...
+```
+
+Sätt båda eller ingen — halv konfiguration ser inkopplad ut utan att vara det,
+och avvisas därför vid start. Utan dem fungerar sajten ändå: anmälan går som
+vanligt och matlistan ligger på sidan, men ingen blir tillsagd — meddelandet
+skrivs i loggen i stället. Det är också vad demoläget gör: demon når aldrig en
+riktig chattserver och kan därför aldrig råka skriva till någon.
+
+**Bara boten pratar utåt.** Kommunikationen går i en riktning: boten skickar,
+den lyssnar inte. Det finns ingen inkommande webhook och inget slash command
+att konfigurera, och därmed ingen ny väg in i huset.
 
 ---
 
@@ -118,8 +154,16 @@ Ett lag som är avstängt hoppas över. Behöver ni byta för en enskild kväll
 väljer ni ett annat lag för just den — resten av säsongen ligger kvar som
 förut.
 
-Varje lag har en **lagledare** med en e-postadress. Det är dit matlistan
-mejlas.
+Varje lag har en **lagledare**, angiven med sitt användarnamn i Mattermost. Det
+är dit matlistan skickas, och det är allt som ska fyllas i: **namnet hämtas från
+kontot**, stavat som personen själv stavar det. Det finns alltså inget eget
+namnfält att hålla i takt med chatten.
+
+Fältet tar användarnamnet — det som står efter `@` — men också hela namnet:
+matgruppen kan skriva *Anna Andersson* och få rätt konto. Finns det två som
+heter samma säger sidan vilka de är i stället för att gissa, och medan man
+skriver föreslår den husets konton. Ett lag utan användarnamn får inget
+meddelande, och det syns som **ingen lagledare** i listan.
 
 ### Anmälningsstopp
 
@@ -173,22 +217,49 @@ bara gästens egen anmälan. Går att stänga av helt under **Inställningar**.
 
 ### Matlistan och utskicket
 
-När anmälan stänger mejlas lagledaren. **Mejlet innehåller ingen lista och inga
-specialkoster** — bara en länk till matlistan. Där står allt på ett ställe,
-alltid aktuellt, och inget känsligt ligger kvar i en inkorg.
+När anmälan stänger får lagledaren ett direktmeddelande från boten. Det
+innehåller **summorna laget handlar efter** — hushåll, vuxna, barn, portioner
+av varje kosthållning, antal gäster och hur många som anmält en allergi — och
+en länk till matlistan.
 
-Matlistan visar summorna laget lagar efter — vuxna, barn och antalet portioner
-av varje kosthållning — plus allergierna och vilka hushåll som kommer. Alla fem
-kosthållningarna står med även när ingen valt dem, så att en gryta som inte
-behövs syns som en nolla i stället för att saknas. Sidan är gjord för att
-skrivas ut.
+Så ser det ut i chatten:
 
-Länken i mejlet är signerad och öppnar **den kvällens lista och inget annat**.
-Lagledaren behöver alltså inte leta rätt på husets lösenord för att se vad hen
-ska laga.
+> **Hej Anna!** Anmälan till middagen tisdag 25 augusti är stängd och matlistan
+> är klar.
+>
+> | | |
+> |---|---|
+> | **Hushåll** | 3 |
+> | **Vuxna** | 5 |
+> | **Barn** | 1 |
+> | **Portioner** | 6 |
+> | **Allätare** | 2 |
+> | **Flexitarian** | 0 |
+> | **Pescetarian** | 0 |
+> | **Vegetarian** | 3 |
+> | **Vegan** | 1 |
+> | **Gäster** | 0 |
+> | **Allergier** | 1 |
+>
+> [Öppna matlistan](#) · Maten serveras 18:00 i stora matsalen.
 
-Har mejlet kommit bort går det att skicka om från schemat i administrationen.
-Utan SMTP fungerar allt annat som vanligt; utskicket skrivs bara i loggen.
+Siffrorna står i meddelandet därför att det är dem laget vill se direkt, i
+chatten de redan läser. **Namn och allergitexter står inte där.** De hör till
+hushållen som skrivit dem och ligger kvar på listan, ett klick bort, där de
+alltid är aktuella.
+
+Matlistan visar samma summor plus allergierna och vilka hushåll som kommer.
+Alla fem kosthållningarna står med även när ingen valt dem, så att en gryta som
+inte behövs syns som en nolla i stället för att saknas — både i meddelandet och
+på sidan. Sidan är gjord för att skrivas ut.
+
+Länken i meddelandet är signerad och öppnar **den kvällens lista och inget
+annat**. Lagledaren behöver alltså inte leta rätt på husets lösenord för att se
+vad hen ska laga.
+
+Har meddelandet kommit bort går det att skicka om från schemat i
+administrationen. Utan Mattermost fungerar allt annat som vanligt; utskicket
+skrivs bara i loggen, och varje sida säger *Utan utskick* nere i foten.
 
 ### Till kalkylark
 
@@ -206,7 +277,7 @@ administratören får en färdig formel att klistra in i en cell:
 ```
 
 Arket hämtar då listan självt, och siffrorna uppdaterar sig ända till anmälan
-stänger. Länken bär samma nyckel som mejlet till lagledaren: den öppnar den
+stänger. Länken bär samma nyckel som meddelandet till lagledaren: den öppnar den
 kvällens lista utan lösenord, och ingenting annat. Därför visas den bara för
 matlaget och administratören — alla i huset kan läsa listan, men en länk som
 funkar utan inloggning är en annan sak att dela ut.
@@ -222,8 +293,8 @@ kaka och gäller allt: sidor, datum, veckodagar och matlistan.
 Har man inte valt något gissar servern på webbläsarens `Accept-Language`, och
 faller tillbaka på `site.language` i `config.yaml`.
 
-Mejlet till lagledaren följer `site.language`, inte någons webbläsare — vi vet
-ju inte vad den som öppnar mejlet har för inställningar.
+Meddelandet till lagledaren följer `site.language`, inte någons webbläsare — vi
+vet ju inte vad den som läser det har för inställningar.
 
 ### Vem som ser vad
 
@@ -234,6 +305,11 @@ att man kan ändra sig senare.
 Adressen visas bara för en själv, för matgruppen i administrationen och i
 CSV-exporten. Andra i huset ser namn, antal och specialkost — aldrig adresser.
 
+Hushållens adresser har ingenting att göra med matlagens användarnamn i
+Mattermost. Adressen är hushållets egen nyckel till sina anmälningar;
+användarnamnet är hur sajten når en lagledare. Anmälan kräver alltså inget
+Mattermost-konto — bara husets lösenord.
+
 ---
 
 ## Administration
@@ -242,8 +318,8 @@ CSV-exporten. Andra i huset ser namn, antal och specialkost — aldrig adresser.
 
 | Flik | Vad du gör där |
 |---|---|
-| **Schema** | Kvällarna i en säsong: byta matlag för en enskild kväll, ställa in den, skriva ett meddelande till huset, se hur många som anmält sig och om listan är mejlad — och mejla om den |
-| **Matlag** | Turordningen, som dras på plats, och lagen med sina lagledare och e-postadresser |
+| **Schema** | Kvällarna i en säsong: byta matlag för en enskild kväll, ställa in den, skriva ett meddelande till huset, se hur många som anmält sig och om listan är skickad — och skicka om den |
+| **Matlag** | Turordningen, som dras på plats, och lagen med sina lagledares användarnamn i Mattermost |
 | **Säsonger** | Start- och slutdatum, vilka veckodagar som är middagskvällar, och vilket lag som tar säsongens första middag |
 | **Uppehåll** | Lov och röda dagar |
 | **Inställningar** | Anmälningsstoppet och gästsidan |
@@ -266,12 +342,12 @@ go run ./cmd/server -check-config      # eller: make check
 
 ```yaml
 site:
-  title: Rudbeckia middagar          # syns i huvudet och i mejlen
+  title: Rudbeckia middagar          # syns i huvudet och i meddelandena
   tagline: Kollektivhuset Rudbeckia
   house_name: Kollektivhuset Rudbeckia
   timezone: Europe/Stockholm         # allt visas i den här tidszonen
   language: sv                       # sv eller en: språket innan man valt,
-                                     # och språket i mejlen till matlagen
+                                     # och språket i meddelandena till matlagen
   home_url: https://rudbeckia.nu
   support_url: https://rudbeckia.nu/kontakt/
   footer_note: Kollektivhuset Rudbeckia · Rosendal, Uppsala
@@ -294,8 +370,8 @@ deadline:                            # utgångsläge; ändras sedan i admin
 
 teams:                               # bara till första starten
   - name: Lag 1
-    leader: Anna Andersson
-    email: anna@example.se
+    mattermost: anna.andersson       # lagledarens användarnamn i husets chat;
+                                     # namnet hämtas från kontot
 
 # season:                            # bara till första starten
 #   name: Hösten 2026
@@ -310,9 +386,9 @@ Det som är hemligt eller beror på var sidan står.
 | Variabel | Standard | Vad den gör |
 |---|---|---|
 | `DINNER_PASSWORD` | — | **Krävs.** Husets gemensamma lösenord |
-| `BASE_URL` | `http://localhost:8080` | Den publika adressen. Används i länken som mejlas till matlaget, så den måste stämma |
+| `BASE_URL` | `http://localhost:8080` | Den publika adressen. Används i länken som skickas till matlaget, så den måste stämma |
 | `ADMIN_PASSWORD` | tomt | Låser upp `/admin`. Tomt stänger av administrationen helt |
-| `SESSION_SECRET` | härleds ur lösenorden | Signerar sessioner och de mejlade länkarna. Sätt den för att slippa logga ut alla när ett lösenord byts |
+| `SESSION_SECRET` | härleds ur lösenorden | Signerar sessioner och de länkar som skickas ut. Sätt den för att slippa logga ut alla när ett lösenord byts |
 | `SESSION_DAYS` | `90` | Hur länge en inloggning håller |
 | `CONFIG_PATH` | `config.yaml` | Var husets inställningar ligger |
 | `DB_PATH` | `data/dinners.db` | Var databasen ligger |
@@ -320,13 +396,8 @@ Det som är hemligt eller beror på var sidan står.
 | `TRUST_PROXY` | `true` | Läs klientens adress ur `X-Forwarded-For` |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` eller `error` |
 | `DEMO` | `false` | Demoläge. Aldrig skarpt |
-| `SMTP_HOST` | tomt | Tomt = inga utskick, bara loggrader |
-| `SMTP_PORT` | `587` | |
-| `SMTP_USER`, `SMTP_PASSWORD` | tomt | |
-| `SMTP_FROM`, `SMTP_FROM_NAME` | tomt / `Rudbeckia middagar` | Avsändare |
-| `SMTP_ENCRYPTION` | `starttls` | `starttls` (587), `tls` (465) eller `none` |
-| `SMTP_REPLY_TO` | tomt | Dit svar går |
-| `SMTP_BCC` | tomt | Hemlig kopia av varje utskick |
+| `MATTERMOST_URL` | tomt | Husets Mattermost, t.ex. `https://chat.rudbeckia.nu` |
+| `MATTERMOST_TOKEN` | tomt | Bot-kontots access token. Utan URL och token skickas inget alls, bara loggrader — sätt båda eller ingen |
 
 ---
 
@@ -352,7 +423,7 @@ administrationen, som är vanliga länkar.
 | `internal/auth` | Lösenordsspärren, sessioner, identiteten och de signerade länkarna |
 | `internal/store` | SQLite: lag, säsonger, uppehåll, anmälningar, utskicksloggen |
 | `internal/dinner` | Schemat, turordningen och summeringen. Rör aldrig databasen |
-| `internal/mail` | SMTP och MIME |
+| `internal/mattermost` | Boten: uppslag i husets katalog och direktmeddelanden |
 | `internal/web` | Routing, sidor, mallar och utskicket |
 | `internal/setup` | Första starten och demodatan |
 
@@ -361,6 +432,13 @@ det ser ut och gör bara det som fattas. Går du från en tidigare version, där
 kosthållning var två räknare per anmälan, blir en anmälan som var delvis vegansk
 eller vegetarisk den kosthållningen rakt igenom — det är ändå den maten laget
 måste laga.
+
+Kom du från versionen som mejlade matlistan får matlagen en kolumn för
+användarnamn, och kolumnen med lagledarnas e-postadresser tas bort: det går
+inte längre att skicka något dit, och då ska adresserna inte ligga kvar. Lagen,
+turordningen och alla anmälningar är orörda, men **matgruppen måste fylla i ett
+användarnamn per lag** — tills dess står det *ingen lagledare* och ingen får
+någon lista. Lagledarens namn skrivs över med namnet på kontot när laget sparas. Ta en kopia av `data/dinners.db` innan du uppgraderar, som alltid.
 
 Datum lagras som `2006-01-02` i husets egen tidszon. En middag är en kväll, inte
 ett ögonblick, och det tar bort alla sommartidsfällor på en gång. Tidpunkter

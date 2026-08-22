@@ -40,20 +40,19 @@ deadline:
   time: "23:59"
   weeks_before: 1
 
-# Matlagen, i den ordning de turas om.
+# Matlagen, i den ordning de turas om. mattermost är lagledarens användarnamn
+# i husets chat — det som står efter @ — och det är dit matlistan skickas när
+# anmälan stänger. Lagledarens namn hämtas från kontot, så det finns inget mer
+# att skriva här. Ett lag utan användarnamn får inget meddelande.
 teams:
   - name: Lag 1
-    leader: ""
-    email: ""
+    mattermost: ""
   - name: Lag 2
-    leader: ""
-    email: ""
+    mattermost: ""
   - name: Lag 3
-    leader: ""
-    email: ""
+    mattermost: ""
   - name: Lag 4
-    leader: ""
-    email: ""
+    mattermost: ""
 
 # Den första säsongen. Ta bort blocket om du hellre lägger in den i
 # administrationen.

@@ -91,7 +91,7 @@
 	<div class="footer-inner">
 		<p>{{if .Site.FooterNote}}{{.Site.FooterNote}}{{else}}{{.Site.Title}}{{end}}</p>
 		<p class="muted">
-			{{if not .MailOn}}<span class="warn-dot" title="{{t "layout.nomail.title"}}">●</span> {{t "layout.nomail"}} · {{end}}
+			{{if not .ChatOn}}<span class="warn-dot" title="{{t "layout.nochat.title"}}">●</span> {{t "layout.nochat"}} · {{end}}
 			{{if .Site.SupportURL}}<a href="{{.Site.SupportURL}}">{{t "layout.questions"}}</a>{{end}}
 		</p>
 	</div>

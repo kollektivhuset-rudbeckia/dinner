@@ -3,13 +3,13 @@ package web
 import (
 	"database/sql"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/O5ten/dinners/internal/auth"
 	"github.com/O5ten/dinners/internal/config"
 	"github.com/O5ten/dinners/internal/dinner"
 	"github.com/O5ten/dinners/internal/i18n"
@@ -23,8 +23,9 @@ type scheduleRow struct {
 	Summary dinner.Summary
 	SentAt  time.Time
 	Sent    bool
-	// Unmanned marks an evening whose deadline passed with no cooking team to
-	// tell. Nothing was mailed; the row says so rather than claiming it was.
+	// Unmanned marks an evening whose deadline passed with no cooking-team
+	// leader to tell. Nothing was sent; the row says so rather than claiming
+	// it was.
 	Unmanned bool
 	Open     bool
 	Over     bool
@@ -112,7 +113,7 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request, v *view) {
 		}
 		sent, err := s.store.SentNotifications(ctx, shown.Start, shown.End)
 		if err != nil {
-			s.fail(w, r, "read mail log", err)
+			s.fail(w, r, "read the notification log", err)
 			return
 		}
 		for _, d := range dinners {
@@ -151,7 +152,7 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request, v *view) {
 		"Weekdays": allWeekdays(),
 		"GuestURL": s.rt.BaseURL + "/gast",
 		"Saved":    r.URL.Query().Get("sparat"),
-		"MailOn":   s.mailer.Enabled(),
+		"ChatOn":   s.mm.Enabled(),
 		// The admin view is where the guest link and the spreadsheet formula
 		// are read off the screen, so it is the right place to say that the
 		// address in them is not the real one.
@@ -227,29 +228,48 @@ func (s *Server) handleAdminTeam(w http.ResponseWriter, r *http.Request, v *view
 	}
 
 	name := strings.TrimSpace(r.FormValue("name"))
-	email := auth.NormalizeEmail(r.FormValue("leader_email"))
 	if name == "" {
 		s.errorPage(w, r, http.StatusUnprocessableEntity,
 			"error.team.name", "error.team.name.detail")
 		return
 	}
-	if email != "" && !auth.ValidEmail(email) {
-		s.errorPage(w, r, http.StatusUnprocessableEntity,
-			"error.team.email", "error.team.email.detail")
+	typed := strings.TrimSpace(r.FormValue("leader_username"))
+	leader, err := s.resolveLeader(ctx, typed)
+	if err != nil {
+		var many ambiguousLeader
+		switch {
+		case errors.As(err, &many):
+			s.renderError(w, r, http.StatusUnprocessableEntity,
+				i18n.T(v.Lang, "error.team.username.many", typed),
+				i18n.T(v.Lang, "error.team.username.many.detail", many.Who()))
+		case errors.Is(err, errNoSuchLeader):
+			s.renderError(w, r, http.StatusUnprocessableEntity,
+				i18n.T(v.Lang, "error.team.username", typed),
+				i18n.T(v.Lang, "error.team.username.detail"))
+		default:
+			s.log.Error("look up team leader", "typed", typed, "err", err)
+			s.errorPage(w, r, http.StatusBadGateway,
+				"error.team.username.unreachable", "error.team.username.unreachable.detail")
+		}
 		return
 	}
-	_, err := s.store.SaveTeam(ctx, store.Team{
-		ID:          id,
-		Name:        name,
-		LeaderName:  strings.TrimSpace(r.FormValue("leader_name")),
-		LeaderEmail: email,
-		Active:      r.FormValue("active") != "",
-	})
-	if err != nil {
+	// The name is never typed: it comes from the account, spelled the way its
+	// owner spells it. Nothing to keep in step, and nothing to get wrong.
+	leaderName := ""
+	if leader.ID != "" {
+		leaderName = leader.DisplayName()
+	}
+	if _, err := s.store.SaveTeam(ctx, store.Team{
+		ID:             id,
+		Name:           name,
+		LeaderName:     leaderName,
+		LeaderUsername: leader.Username,
+		Active:         r.FormValue("active") != "",
+	}); err != nil {
 		s.fail(w, r, "save team", err)
 		return
 	}
-	s.log.Info("team saved", "name", name)
+	s.log.Info("team saved", "name", name, "leader", leader.Username)
 	s.adminRedirect(w, r, "lag")
 }
 
@@ -549,8 +569,8 @@ func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request, v *
 	s.adminRedirect(w, r, "installningar")
 }
 
-// handleAdminSend mails one evening's list on demand: a team leader who lost
-// the mail, or a list that is worth sending again after a late change.
+// handleAdminSend sends one evening's list on demand: a team leader who lost
+// the message, or a list that is worth sending again after a late change.
 func (s *Server) handleAdminSend(w http.ResponseWriter, r *http.Request, v *view) {
 	ctx := r.Context()
 	if err := r.ParseForm(); err != nil {
@@ -572,7 +592,7 @@ func (s *Server) handleAdminSend(w http.ResponseWriter, r *http.Request, v *view
 	// Sending again means forgetting that we sent before, so the log keeps
 	// showing when the leader last heard from us.
 	if err := s.store.ClearNotified(ctx, d.Key, notifyKind); err != nil {
-		s.fail(w, r, "clear mail log", err)
+		s.fail(w, r, "clear the notification log", err)
 		return
 	}
 	if err := s.sendList(ctx, d); err != nil {

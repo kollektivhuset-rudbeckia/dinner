@@ -2,6 +2,7 @@ package setup
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/O5ten/dinners/internal/config"
 	"github.com/O5ten/dinners/internal/dinner"
+	"github.com/O5ten/dinners/internal/mattermost"
 	"github.com/O5ten/dinners/internal/store"
 )
 
@@ -24,11 +26,9 @@ deadline:
   weeks_before: 1
 teams:
   - name: Lag 1
-    leader: Anna
-    email: Anna@Example.SE
+    mattermost: "@Anna.Andersson"
   - name: Lag 2
-    leader: Bo
-    email: bo@example.se
+    mattermost: bo.bengtsson
 season:
   name: Hösten 2026
   start: 2026-08-25
@@ -48,6 +48,23 @@ func load(t *testing.T, body string) *config.Config {
 	return cfg
 }
 
+// fakeDirectory stands in for the house's chat: it knows two people, and how
+// they spell their own names.
+type fakeDirectory map[string]mattermost.User
+
+func (d fakeDirectory) ByUsername(_ context.Context, username string) (mattermost.User, error) {
+	u, ok := d[username]
+	if !ok {
+		return mattermost.User{}, fmt.Errorf("no such user %q", username)
+	}
+	return u, nil
+}
+
+var houseChat = fakeDirectory{
+	"anna.andersson": {ID: "u-anna", Username: "anna.andersson", FirstName: "Anna", LastName: "Andersson"},
+	"bo.bengtsson":   {ID: "u-bo", Username: "bo.bengtsson", Nickname: "Bosse"},
+}
+
 func open(t *testing.T) *store.Store {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
@@ -62,7 +79,7 @@ func TestBootstrapSeedsAnEmptyDatabase(t *testing.T) {
 	st, ctx := open(t), context.Background()
 	cfg := load(t, withSeed)
 
-	seeded, err := Bootstrap(ctx, st, cfg)
+	seeded, err := Bootstrap(ctx, st, cfg, houseChat)
 	if err != nil || !seeded {
 		t.Fatalf("Bootstrap = %v, %v", seeded, err)
 	}
@@ -74,9 +91,19 @@ func TestBootstrapSeedsAnEmptyDatabase(t *testing.T) {
 	if teams[0].Name != "Lag 1" || teams[0].Position != 0 || !teams[0].Active {
 		t.Errorf("first team = %+v", teams[0])
 	}
-	// Addresses are the identifier the mail goes to; they must be normalised.
-	if teams[0].LeaderEmail != "anna@example.se" {
-		t.Errorf("LeaderEmail = %q, want it lower-cased", teams[0].LeaderEmail)
+	// The username is what the bot addresses, so a pasted "@Anna.Andersson"
+	// has to be stored the way Mattermost spells it.
+	if teams[0].LeaderUsername != "anna.andersson" {
+		t.Errorf("LeaderUsername = %q, want it lower-cased and without the @",
+			teams[0].LeaderUsername)
+	}
+	// And nobody writes the leader's name: it comes from their account, which
+	// is also where a nickname comes from when that is all the account has.
+	if teams[0].LeaderName != "Anna Andersson" {
+		t.Errorf("LeaderName = %q, want the name on the account", teams[0].LeaderName)
+	}
+	if teams[1].LeaderName != "Bosse" {
+		t.Errorf("second LeaderName = %q, want the nickname on the account", teams[1].LeaderName)
 	}
 
 	seasons, _ := st.Seasons(ctx)
@@ -102,7 +129,7 @@ func TestBootstrapNeverTouchesAnUsedDatabase(t *testing.T) {
 	st, ctx := open(t), context.Background()
 	cfg := load(t, withSeed)
 
-	if _, err := Bootstrap(ctx, st, cfg); err != nil {
+	if _, err := Bootstrap(ctx, st, cfg, houseChat); err != nil {
 		t.Fatal(err)
 	}
 	teams, _ := st.Teams(ctx)
@@ -114,7 +141,7 @@ func TestBootstrapNeverTouchesAnUsedDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	seeded, err := Bootstrap(ctx, st, cfg)
+	seeded, err := Bootstrap(ctx, st, cfg, houseChat)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,10 +154,38 @@ func TestBootstrapNeverTouchesAnUsedDatabase(t *testing.T) {
 	}
 }
 
+// A username the chat server does not know, or no chat server at all, must not
+// stop a first start: the team is seeded with what the file says and gets its
+// name the first time an administrator saves it.
+func TestBootstrapSurvivesALeaderTheChatDoesNotKnow(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		dir  Directory
+	}{
+		{"a stranger", houseChat},
+		{"no chat server at all", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, ctx := open(t), context.Background()
+			cfg := load(t, "site:\n  title: Test\nteams:\n  - name: Lag 1\n    mattermost: hittepa.person\n")
+			if _, err := Bootstrap(ctx, st, cfg, tc.dir); err != nil {
+				t.Fatalf("Bootstrap: %v", err)
+			}
+			teams, _ := st.Teams(ctx)
+			if len(teams) != 1 || teams[0].LeaderUsername != "hittepa.person" {
+				t.Fatalf("teams = %+v", teams)
+			}
+			if teams[0].LeaderName != "" {
+				t.Errorf("LeaderName = %q, want nothing invented", teams[0].LeaderName)
+			}
+		})
+	}
+}
+
 func TestBootstrapWithoutTeamsOrSeason(t *testing.T) {
 	st, ctx := open(t), context.Background()
 	cfg := load(t, "site:\n  title: Test\n")
-	if _, err := Bootstrap(ctx, st, cfg); err != nil {
+	if _, err := Bootstrap(ctx, st, cfg, houseChat); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 	if teams, _ := st.Teams(ctx); len(teams) != 0 {
@@ -165,8 +220,8 @@ func TestDemoProducesAUsableHouse(t *testing.T) {
 		t.Errorf("got %d teams, want the four cooking teams", len(teams))
 	}
 	for _, team := range teams {
-		if team.LeaderEmail == "" {
-			t.Errorf("%s has no leader address, so it could never be mailed", team.Name)
+		if team.LeaderUsername == "" {
+			t.Errorf("%s has no leader username, so it could never be told anything", team.Name)
 		}
 	}
 	seasons, _ := st.Seasons(ctx)

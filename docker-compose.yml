@@ -18,17 +18,12 @@ services:
       SESSION_DAYS: ${SESSION_DAYS:-90}
       LOG_LEVEL: ${LOG_LEVEL:-info}
 
-      # --- Outgoing mail ----------------------------------------------------
-      # Without these the site still works; the cooking team's mail is only
-      # written to the log, and the list is still on the site.
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_FROM: ${SMTP_FROM:-}
-      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Rudbeckia middagar}
-      SMTP_ENCRYPTION: ${SMTP_ENCRYPTION:-starttls}
-      SMTP_REPLY_TO: ${SMTP_REPLY_TO:-}
+      # --- Mattermost -------------------------------------------------------
+      # The bot that tells the cooking team's leader that the list is ready.
+      # Without these the site still works; the message is only written to the
+      # log, and the list is still on the site.
+      MATTERMOST_URL: ${MATTERMOST_URL:-}
+      MATTERMOST_TOKEN: ${MATTERMOST_TOKEN:-}
     volumes:
       - dinners-data:/data
       # Mount your own house settings over the ones baked into the image.

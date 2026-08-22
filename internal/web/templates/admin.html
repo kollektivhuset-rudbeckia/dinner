@@ -11,8 +11,8 @@
 	{{else}}{{t "admin.saved"}}{{end}}
 </p>
 {{end}}
-{{if not .Data.MailOn}}
-<p class="alert alert-warn">{{t "admin.nomail" "SMTP_HOST" "SMTP_FROM"}}</p>
+{{if not .Data.ChatOn}}
+<p class="alert alert-warn">{{t "admin.nochat" "MATTERMOST_URL" "MATTERMOST_TOKEN"}}</p>
 {{end}}
 {{if .Data.BaseURLUnset}}
 <p class="alert alert-warn">{{t "admin.nobaseurl" .Data.BaseURL "BASE_URL"}}</p>
@@ -78,13 +78,13 @@
 			<div class="sched-state">
 				<span class="chip">{{t "admin.schedule.people" .Summary.People}}</span>
 				{{if .Sent}}
-					<span class="chip chip-ok" title="{{t "admin.schedule.mailed.title" (dateTime .SentAt)}}">{{t "admin.schedule.mailed"}}</span>
+					<span class="chip chip-ok" title="{{t "admin.schedule.sent.title" (dateTime .SentAt)}}">{{t "admin.schedule.sent"}}</span>
 				{{else if .Unmanned}}
 					<span class="chip chip-warn" title="{{t "admin.schedule.noteam.title"}}">{{t "admin.schedule.noteam"}}</span>
 				{{else if .Open}}
 					<span class="chip">{{t "admin.schedule.open"}}</span>
 				{{else}}
-					<span class="chip chip-warn">{{t "admin.schedule.notmailed"}}</span>
+					<span class="chip chip-warn">{{t "admin.schedule.notsent"}}</span>
 				{{end}}
 			</div>
 			<div class="sched-actions">
@@ -96,8 +96,8 @@
 			<input type="hidden" name="date" value="{{$d.Key}}">
 			<input type="hidden" name="back" value="/admin?sasong={{$d.Season.ID}}#schema">
 			<button type="submit" class="link-button"
-			        data-confirm="{{t "admin.schedule.mail.confirm" (dateShort $d.Date)}}">
-				{{if .Sent}}{{t "admin.schedule.mailagain"}}{{else}}{{t "admin.schedule.mailnow"}}{{end}}
+			        data-confirm="{{t "admin.schedule.send.confirm" (dateShort $d.Date)}}">
+				{{if .Sent}}{{t "admin.schedule.sendagain"}}{{else}}{{t "admin.schedule.sendnow"}}{{end}}
 			</button>
 		</form>
 		{{end}}
@@ -125,7 +125,10 @@
 		<h2>{{t "admin.tab.teams"}}</h2>
 		<span class="muted small">{{t "admin.teams.count" (len .Data.Teams)}}</span>
 	</div>
-	<p class="muted">{{t "admin.teams.body"}}</p>
+	<p class="muted">{{t "admin.teams.body"}} {{t "admin.teams.leader.hint"}}</p>
+	{{/* One list of accounts for every leader field on the page; app.js fills
+	     it in from Mattermost, and typing a username works without it. */}}
+	{{if .Data.ChatOn}}<datalist id="mattermost-users" data-member-list="/admin/mattermost"></datalist>{{end}}
 
 	<h3 class="section-title">{{t "admin.teams.order"}}</h3>
 	<p class="muted small">{{t "admin.teams.order.body"}}</p>
@@ -140,6 +143,7 @@
 				<span class="order-name">
 					{{$t.Name}}
 					{{if $t.LeaderName}}<small class="muted">{{$t.LeaderName}}</small>{{end}}
+					{{if not $t.LeaderUsername}}<span class="chip chip-warn">{{t "admin.teams.noleader"}}</span>{{end}}
 					{{if not $t.Active}}<span class="chip">{{t "admin.teams.off"}}</span>{{end}}
 				</span>
 				<span class="order-moves">
@@ -169,8 +173,10 @@
 			<input type="hidden" name="id" value="{{.ID}}">
 			<input type="hidden" name="back" value="/admin#lag">
 			<div class="field"><label>{{t "admin.teams.team"}}<input name="name" type="text" value="{{.Name}}" required></label></div>
-			<div class="field"><label>{{t "admin.teams.leader"}}<input name="leader_name" type="text" value="{{.LeaderName}}" placeholder="Anna Andersson"></label></div>
-			<div class="field"><label>{{t "admin.teams.email"}}<input name="leader_email" type="email" value="{{.LeaderEmail}}" placeholder="anna@example.se"></label></div>
+			<div class="field">
+				<label>{{t "admin.teams.leader"}}<input name="leader_username" type="text" value="{{.LeaderUsername}}" placeholder="anna.andersson" list="mattermost-users" autocapitalize="none" autocomplete="off" spellcheck="false"></label>
+				{{if .LeaderName}}<small class="muted">{{.LeaderName}}</small>{{end}}
+			</div>
 			<label class="checkbox"><input type="checkbox" name="active" value="1" {{if .Active}}checked{{end}}><span>{{t "admin.teams.inrotation"}}</span></label>
 			<div class="team-actions">
 				<button type="submit" class="button small">{{t "save"}}</button>
@@ -188,8 +194,7 @@
 	<form method="post" action="/admin/lag" class="team-row">
 		<input type="hidden" name="back" value="/admin#lag">
 		<div class="field"><label>{{t "admin.teams.team"}}<input name="name" type="text" required placeholder="Lag 1"></label></div>
-		<div class="field"><label>{{t "admin.teams.leader"}}<input name="leader_name" type="text" placeholder="Anna Andersson"></label></div>
-		<div class="field"><label>{{t "admin.teams.email"}}<input name="leader_email" type="email" placeholder="anna@example.se"></label></div>
+		<div class="field"><label>{{t "admin.teams.leader"}}<input name="leader_username" type="text" placeholder="anna.andersson" list="mattermost-users" autocapitalize="none" autocomplete="off" spellcheck="false"></label></div>
 		<label class="checkbox"><input type="checkbox" name="active" value="1" checked><span>{{t "admin.teams.inrotation"}}</span></label>
 		<div class="team-actions"><button type="submit" class="button small primary">{{t "add"}}</button></div>
 	</form>
@@ -363,7 +368,7 @@
 				<th>{{t "admin.standing.evening"}}</th>
 				<th class="num">{{t "form.adults"}}</th><th class="num">{{t "form.children"}}</th>
 				<th>{{t "list.col.diet"}}</th><th>{{t "list.col.note"}}</th>
-				<th>{{t "admin.teams.email"}}</th></tr>
+				<th>{{t "admin.standing.email"}}</th></tr>
 			</thead>
 			<tbody>
 				{{range .Data.Standing}}

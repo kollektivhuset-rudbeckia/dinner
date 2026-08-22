@@ -10,14 +10,26 @@ import (
 
 	"github.com/O5ten/dinners/internal/auth"
 	"github.com/O5ten/dinners/internal/config"
+	"github.com/O5ten/dinners/internal/mattermost"
 	"github.com/O5ten/dinners/internal/store"
 )
+
+// Directory is the part of the Mattermost bot the first-run seeding needs: the
+// leaders in config.yaml are named by username, and their own spelling of
+// their name comes from their account.
+type Directory interface {
+	ByUsername(ctx context.Context, username string) (mattermost.User, error)
+}
 
 // Bootstrap seeds an empty database from config.yaml, and does nothing at all
 // once anything has been written. The YAML is a starting point, not a source
 // of truth: after the first start the matgrupp edits teams and seasons in the
 // admin view, and a later config change must not quietly undo that.
-func Bootstrap(ctx context.Context, st *store.Store, cfg *config.Config) (bool, error) {
+//
+// dir looks the cooking teams' leaders up in the house's chat. It may be a
+// disabled client, or nil, in which case a team keeps its username and no
+// name until an administrator saves it from the admin view.
+func Bootstrap(ctx context.Context, st *store.Store, cfg *config.Config, dir Directory) (bool, error) {
 	empty, err := st.Empty(ctx)
 	if err != nil {
 		return false, err
@@ -36,12 +48,13 @@ func Bootstrap(ctx context.Context, st *store.Store, cfg *config.Config) (bool, 
 	}
 
 	for i, t := range cfg.Teams {
+		username := mattermost.Username(t.Mattermost)
 		if _, err := st.SaveTeam(ctx, store.Team{
-			Name:        t.Name,
-			LeaderName:  t.Leader,
-			LeaderEmail: auth.NormalizeEmail(t.Email),
-			Position:    i,
-			Active:      true,
+			Name:           t.Name,
+			LeaderName:     leaderName(ctx, dir, username),
+			LeaderUsername: username,
+			Position:       i,
+			Active:         true,
 		}); err != nil {
 			return false, fmt.Errorf("seed team %q: %w", t.Name, err)
 		}
@@ -119,11 +132,14 @@ var guests = []struct {
 	{"Sam Ali", "Hugo Nyström", store.DietPescetarian, "allergisk mot skaldjur"},
 }
 
-var demoTeams = []config.Team{
-	{Name: "Lag 1", Leader: "Anna Andersson", Email: "anna@example.com"},
-	{Name: "Lag 2", Leader: "Bo Bengtsson", Email: "bo@example.com"},
-	{Name: "Lag 3", Leader: "Cecilia Dahl", Email: "cecilia@example.com"},
-	{Name: "Lag 4", Leader: "David Ek", Email: "david@example.com"},
+// demoTeams are made up, and so are their usernames and leaders: the demo
+// never reaches a chat server, so it writes the names a lookup would otherwise
+// have brought back, and nobody is to be messaged from it by accident.
+var demoTeams = []struct{ Name, Leader, Username string }{
+	{"Lag 1", "Anna Andersson", "anna.andersson"},
+	{"Lag 2", "Bo Bengtsson", "bo.bengtsson"},
+	{"Lag 3", "Cecilia Dahl", "cecilia.dahl"},
+	{"Lag 4", "David Ek", "david.ek"},
 }
 
 // Demo fills an empty database with a season that is already under way, so
@@ -150,7 +166,7 @@ func Demo(ctx context.Context, st *store.Store, cfg *config.Config, now time.Tim
 	}
 	for i, t := range demoTeams {
 		if _, err := st.SaveTeam(ctx, store.Team{
-			Name: t.Name, LeaderName: t.Leader, LeaderEmail: t.Email,
+			Name: t.Name, LeaderName: t.Leader, LeaderUsername: t.Username,
 			Position: i, Active: true,
 		}); err != nil {
 			return 0, err
@@ -266,7 +282,7 @@ func Demo(ctx context.Context, st *store.Store, cfg *config.Config, now time.Tim
 		}
 	}
 
-	// Dinners whose deadline has passed already had their list mailed, so the
+	// Dinners whose deadline has passed already had their list sent, so the
 	// admin schedule does not look like a pile of missed notifications.
 	deadline := demoDeadline(cfg)
 	for _, day := range dates {
@@ -347,4 +363,19 @@ func hasWeekday(list []time.Weekday, wd time.Weekday) bool {
 		}
 	}
 	return false
+}
+
+// leaderName asks the chat server how a leader spells their own name. A
+// username that answers to nobody — or no chat server at all — is not worth
+// failing a first start over: the team is seeded with its username, and the
+// name fills itself in the first time the team is saved in the admin view.
+func leaderName(ctx context.Context, dir Directory, username string) string {
+	if dir == nil || username == "" {
+		return ""
+	}
+	u, err := dir.ByUsername(ctx, username)
+	if err != nil || u.ID == "" {
+		return ""
+	}
+	return u.DisplayName()
 }

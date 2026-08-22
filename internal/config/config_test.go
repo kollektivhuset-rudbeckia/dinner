@@ -67,8 +67,7 @@ deadline:
   weeks_before: 2
 teams:
   - name: Lag 1
-    leader: Anna
-    email: anna@example.se
+    mattermost: anna.andersson
 season:
   name: Hösten 2026
   start: 2026-08-25
@@ -84,7 +83,8 @@ season:
 	if cfg.Deadline.ParsedWeekday() != time.Wednesday || cfg.Deadline.Minutes() != 720 {
 		t.Errorf("deadline = %v %d", cfg.Deadline.ParsedWeekday(), cfg.Deadline.Minutes())
 	}
-	if len(cfg.Teams) != 1 || cfg.Teams[0].Leader != "Anna" {
+	if len(cfg.Teams) != 1 || cfg.Teams[0].Name != "Lag 1" ||
+		cfg.Teams[0].Mattermost != "anna.andersson" {
 		t.Errorf("teams = %+v", cfg.Teams)
 	}
 	if cfg.Season == nil || cfg.Season.Start != "2026-08-25" {
@@ -101,7 +101,10 @@ func TestLoadRejectsBadConfigurations(t *testing.T) {
 		{"bad serving time", "dinner:\n  serving_time: \"25:00\"\n", "out of range"},
 		{"bad deadline time", "deadline:\n  time: \"halv sex\"\n", "not HH:MM"},
 		{"negative weeks", "deadline:\n  weeks_before: -1\n", "cannot be negative"},
-		{"nameless team", "teams:\n  - leader: Anna\n", "missing a name"},
+		{"nameless team", "teams:\n  - mattermost: anna.andersson\n", "missing a name"},
+		{"a name where a username belongs",
+			"teams:\n  - name: Lag 1\n    mattermost: Anna Andersson\n", "not a username"},
+		{"a leader's name of its own", "teams:\n  - name: Lag 1\n    leader: Anna\n", "field leader"},
 		{"bad season date", "season:\n  name: X\n  start: igår\n  end: 2026-12-17\n", "not a date"},
 		{"backwards season", "season:\n  name: X\n  start: 2026-12-17\n  end: 2026-08-25\n", "before"},
 	}
@@ -212,12 +215,47 @@ func TestSessionSecretDerivation(t *testing.T) {
 	}
 }
 
-func TestLoadRuntimeRejectsUnknownEncryption(t *testing.T) {
+// Half a Mattermost configuration looks connected and is not, so it is
+// refused at startup rather than discovered at the first deadline.
+func TestLoadRuntimeWantsBothMattermostSettingsOrNeither(t *testing.T) {
+	for _, tc := range []struct {
+		name, url, token string
+		wantErr          bool
+	}{
+		{"neither", "", "", false},
+		{"both", "https://chat.example.se", "tok", false},
+		{"url only", "https://chat.example.se", "", true},
+		{"token only", "", "tok", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("DINNER_PASSWORD", "hemligt")
+			t.Setenv("MATTERMOST_URL", tc.url)
+			t.Setenv("MATTERMOST_TOKEN", tc.token)
+			rt, err := LoadRuntime()
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("LoadRuntime error = %v, want an error: %v", err, tc.wantErr)
+			}
+			if err == nil && rt.Mattermost.Enabled() != (tc.url != "" && tc.token != "") {
+				t.Errorf("Enabled() = %v for %+v", rt.Mattermost.Enabled(), rt.Mattermost)
+			}
+		})
+	}
+}
+
+// The demo is seeded with made-up cooking teams, so it must never be able to
+// message a real person.
+func TestDemoModeNeverReachesAChatServer(t *testing.T) {
 	clearEnv(t)
-	t.Setenv("DINNER_PASSWORD", "hemligt")
-	t.Setenv("SMTP_ENCRYPTION", "rot13")
-	if _, err := LoadRuntime(); err == nil {
-		t.Error("expected an error for an unknown SMTP_ENCRYPTION")
+	t.Setenv("DEMO", "true")
+	t.Setenv("MATTERMOST_URL", "https://chat.example.se")
+	t.Setenv("MATTERMOST_TOKEN", "tok")
+	rt, err := LoadRuntime()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rt.Mattermost.Enabled() {
+		t.Errorf("the demo kept a chat server: %+v", rt.Mattermost)
 	}
 }
 
@@ -231,15 +269,18 @@ func TestBaseURLLosesItsTrailingSlash(t *testing.T) {
 	}
 }
 
-func TestMailSettingsEnabled(t *testing.T) {
-	if (MailSettings{}).Enabled() {
-		t.Error("no host, no mail")
+func TestMattermostSettingsEnabled(t *testing.T) {
+	if (MattermostSettings{}).Enabled() {
+		t.Error("nothing configured, nothing sent")
 	}
-	if (MailSettings{Host: "smtp.example.se"}).Enabled() {
-		t.Error("a host without a from address cannot send")
+	if (MattermostSettings{URL: "https://chat.example.se"}).Enabled() {
+		t.Error("a server without a token cannot post")
 	}
-	if !(MailSettings{Host: "smtp.example.se", From: "mat@example.se"}).Enabled() {
-		t.Error("host and from should be enough")
+	if (MattermostSettings{Token: "tok"}).Enabled() {
+		t.Error("a token without a server has nowhere to post")
+	}
+	if !(MattermostSettings{URL: "https://chat.example.se", Token: "tok"}).Enabled() {
+		t.Error("a server and a token should be enough")
 	}
 }
 
@@ -250,8 +291,7 @@ func clearEnv(t *testing.T) {
 	for _, k := range []string{
 		"DEMO", "LISTEN_ADDR", "CONFIG_PATH", "DB_PATH", "BASE_URL",
 		"DINNER_PASSWORD", "ADMIN_PASSWORD", "SESSION_SECRET", "SESSION_DAYS",
-		"TRUST_PROXY", "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD",
-		"SMTP_FROM", "SMTP_FROM_NAME", "SMTP_ENCRYPTION", "SMTP_REPLY_TO", "SMTP_BCC",
+		"TRUST_PROXY", "MATTERMOST_URL", "MATTERMOST_TOKEN",
 	} {
 		t.Setenv(k, "")
 		os.Unsetenv(k)
@@ -259,7 +299,7 @@ func clearEnv(t *testing.T) {
 }
 
 // Every link that leaves the site is built from BASE_URL, so a deployment that
-// never set it needs telling rather than quietly mailing out links that point
+// never set it needs telling rather than quietly sending out links that point
 // at the server's own machine.
 func TestBaseURLUnsetIsDetected(t *testing.T) {
 	clearEnv(t)

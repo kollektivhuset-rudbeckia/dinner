@@ -19,7 +19,7 @@ import (
 	"github.com/O5ten/dinners/internal/config"
 	"github.com/O5ten/dinners/internal/dinner"
 	"github.com/O5ten/dinners/internal/i18n"
-	"github.com/O5ten/dinners/internal/mail"
+	"github.com/O5ten/dinners/internal/mattermost"
 	"github.com/O5ten/dinners/internal/store"
 )
 
@@ -31,12 +31,17 @@ var staticFS embed.FS
 
 // Server holds everything the handlers need.
 type Server struct {
-	cfg    *config.Config
-	rt     config.Runtime
-	store  *store.Store
-	guard  *auth.Guard
-	mailer *mail.Sender
-	log    *slog.Logger
+	cfg   *config.Config
+	rt    config.Runtime
+	store *store.Store
+	guard *auth.Guard
+	// mm is the bot that messages the cooking teams and answers the admin
+	// view's lookups of who is in the house.
+	mm  *mattermost.Client
+	log *slog.Logger
+	// members caches the house's Mattermost directory, which the teams page
+	// offers when an administrator names a leader.
+	members memberCache
 	// tpl holds one parsed set per language. The language is baked into the
 	// template functions, so a page can say {{t "key"}} and get the right
 	// words without every call site passing a language around.
@@ -56,8 +61,8 @@ var pages = []string{
 var layouts = []string{"base.html", "fields.html"}
 
 // New builds the HTTP server.
-func New(cfg *config.Config, rt config.Runtime, st *store.Store, guard *auth.Guard, mailer *mail.Sender, log *slog.Logger) (*Server, error) {
-	s := &Server{cfg: cfg, rt: rt, store: st, guard: guard, mailer: mailer, log: log, now: time.Now}
+func New(cfg *config.Config, rt config.Runtime, st *store.Store, guard *auth.Guard, mm *mattermost.Client, log *slog.Logger) (*Server, error) {
+	s := &Server{cfg: cfg, rt: rt, store: st, guard: guard, mm: mm, log: log, now: time.Now}
 	s.tpl = make(map[i18n.Lang]map[string]*template.Template, len(i18n.Langs))
 	for _, lang := range i18n.Langs {
 		set := make(map[string]*template.Template, len(pages))
@@ -112,7 +117,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /gast/{token}", s.handleGuestUpdate)
 
 	// The printable list is reachable both by a logged-in member and by the
-	// signed link mailed to the cooking-team leader, so it does its own check.
+	// signed link sent to the cooking-team leader, so it does its own check.
 	mux.HandleFunc("GET /middag/{date}/lista", s.handleList)
 	mux.HandleFunc("GET /middag/{date}/lista.csv", s.handleListCSV)
 
@@ -134,6 +139,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /admin/schema", s.admin(s.handleAdminSchedule))
 	mux.Handle("POST /admin/installningar", s.admin(s.handleAdminSettings))
 	mux.Handle("POST /admin/skicka", s.admin(s.handleAdminSend))
+	mux.Handle("GET /admin/mattermost", s.admin(s.handleAdminMembers))
 	mux.Handle("POST /admin/anmalan", s.admin(s.handleAdminDeleteRegistration))
 	mux.Handle("GET /admin/export.csv", s.admin(s.handleAdminCSV))
 
@@ -230,7 +236,9 @@ func (s *Server) member(h func(http.ResponseWriter, *http.Request, *view)) http.
 
 // identified additionally insists that the member has said who they are. The
 // e-mail address is the identifier every registration hangs on, so there is
-// nothing useful to show before it is known.
+// nothing useful to show before it is known. It is the household's own
+// identifier and has nothing to do with the cooking teams' Mattermost
+// usernames, which are how the site reaches a leader.
 func (s *Server) identified(h func(http.ResponseWriter, *http.Request, *view)) http.Handler {
 	return s.member(func(w http.ResponseWriter, r *http.Request, v *view) {
 		if !v.Ident.Known() {
@@ -263,19 +271,21 @@ type view struct {
 	Lang  i18n.Lang
 	Other i18n.Lang
 	// Here is the address to come back to after switching language.
-	Here      string
-	Role      auth.Role
-	Ident     auth.Identity
-	Now       time.Time
-	Loc       *time.Location
-	Path      string
-	Title     string
-	BaseURL   string
-	HasAdmin  bool
-	MailOn    bool
+	Here     string
+	Role     auth.Role
+	Ident    auth.Identity
+	Now      time.Time
+	Loc      *time.Location
+	Path     string
+	Title    string
+	BaseURL  string
+	HasAdmin bool
+	// ChatOn says the bot can really reach Mattermost. Without it nothing is
+	// delivered and the site says so rather than pretending.
+	ChatOn    bool
 	GuestOpen bool
 	// Bare drops the house navigation, for the printable list opened from a
-	// mailed link by someone who is not logged in.
+	// link in a message by someone who is not logged in.
 	Bare      bool
 	Demo      bool
 	DemoPass  string
@@ -300,7 +310,7 @@ func (s *Server) newView(r *http.Request, role auth.Role) *view {
 		Path:      r.URL.Path,
 		BaseURL:   s.rt.BaseURL,
 		HasAdmin:  s.guard.HasAdmin(),
-		MailOn:    s.mailer.Enabled(),
+		ChatOn:    s.mm.Enabled(),
 		GuestOpen: true,
 		Demo:      s.rt.Demo,
 		DemoPass:  s.rt.Password,

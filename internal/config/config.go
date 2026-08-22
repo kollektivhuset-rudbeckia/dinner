@@ -32,7 +32,7 @@ type Config struct {
 type Site struct {
 	Title string `yaml:"title"`
 	// Language is what a visitor sees before choosing for themselves, and the
-	// language the cooking team's mail is written in. "sv" or "en".
+	// language the cooking team's message is written in. "sv" or "en".
 	Language   string `yaml:"language"`
 	Tagline    string `yaml:"tagline"`
 	HouseName  string `yaml:"house_name"`
@@ -105,10 +105,15 @@ func (d Deadline) Minutes() int { return d.minutes }
 
 // Team is a cooking team and the leader who receives the list. Teams in the
 // YAML only seed an empty database; after that the admin view owns them.
+//
+// The leader is named by their Mattermost username and nothing else: their
+// name is on their account, and a second one written here could only drift
+// from it.
 type Team struct {
-	Name   string `yaml:"name"`
-	Leader string `yaml:"leader"`
-	Email  string `yaml:"email"`
+	Name string `yaml:"name"`
+	// Mattermost is the leader's username in the house's chat, which is where
+	// the list is sent when registration closes. Written without the @.
+	Mattermost string `yaml:"mattermost"`
 }
 
 // Season is the stretch of the year when dinners are cooked. Like Teams it is
@@ -130,7 +135,7 @@ type Runtime struct {
 	AdminPassword string
 	SessionSecret []byte
 	SessionMaxAge time.Duration
-	Mail          MailSettings
+	Mattermost    MattermostSettings
 	TrustProxy    bool
 	// Demo fills in throwaway passwords, seeds a season with example
 	// registrations and shows a banner saying so. Never enable it for real.
@@ -138,26 +143,22 @@ type Runtime struct {
 }
 
 // BaseURLUnset reports whether BASE_URL was left at its default. Every link
-// that leaves the site — the mail to the cooking team, the address a
+// that leaves the site — the message to the cooking team, the address a
 // spreadsheet fetches, the one to give a guest — is built from it, so this is
 // worth saying out loud rather than discovering from a dead link.
 func (r Runtime) BaseURLUnset() bool { return r.BaseURL == DefaultBaseURL }
 
-// MailSettings configures outgoing notification mail.
-type MailSettings struct {
-	Host       string
-	Port       int
-	Username   string
-	Password   string
-	From       string
-	FromName   string
-	Encryption string // "starttls", "tls" or "none"
-	ReplyTo    string
-	BCC        string
+// MattermostSettings configures the bot that sends the list to the cooking
+// team's leader and answers the admin view's lookups of who is in the house.
+type MattermostSettings struct {
+	// URL is the Mattermost server, e.g. "https://chat.rudbeckia.nu".
+	URL string
+	// Token is the bot account's personal access token.
+	Token string
 }
 
-// Enabled reports whether mail can actually be delivered.
-func (m MailSettings) Enabled() bool { return m.Host != "" && m.From != "" }
+// Enabled reports whether the bot can really reach Mattermost.
+func (m MattermostSettings) Enabled() bool { return m.URL != "" && m.Token != "" }
 
 // Load reads and validates the YAML configuration at path.
 func Load(path string) (*Config, error) {
@@ -240,6 +241,13 @@ func (c *Config) normalize() error {
 	for i, t := range c.Teams {
 		if strings.TrimSpace(t.Name) == "" {
 			return fmt.Errorf("teams[%d] is missing a name", i)
+		}
+		// A leader is named by their Mattermost username, not by their name in
+		// the house: a value with a space in it would be stored as it stands
+		// and then match nobody when the list is to be sent.
+		if u := strings.TrimSpace(t.Mattermost); strings.ContainsAny(u, " \t") {
+			return fmt.Errorf("teams[%d] (%s): mattermost is %q, which is not a username — "+
+				"write it the way it appears after the @, for example anna.andersson", i, t.Name, u)
 		}
 	}
 	if c.Season != nil {

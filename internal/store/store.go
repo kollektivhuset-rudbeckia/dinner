@@ -1,6 +1,6 @@
 // Package store persists everything the dinner registration needs in SQLite:
 // the cooking teams, the seasons, the schedule's exceptions, the standing and
-// one-off registrations, and a log of which lists have already been mailed.
+// one-off registrations, and a log of which lists have already been sent.
 //
 // Dinner dates are stored as plain "2006-01-02" strings in the house's own
 // timezone. A dinner is a calendar evening, not an instant, and keeping it a
@@ -117,15 +117,22 @@ type Standing struct {
 	UpdatedAt time.Time
 }
 
-// Team is a cooking team. The leader is who receives the mail with the link to
-// the list.
+// Team is a cooking team. The leader is who receives the direct message with
+// the totals and the link to the list.
 type Team struct {
-	ID          int64
-	Name        string
-	LeaderName  string
-	LeaderEmail string
-	Position    int
-	Active      bool
+	ID   int64
+	Name string
+	// LeaderName is how the house spells the leader's name. Nobody types it:
+	// it is copied from their Mattermost account when the team is saved, so
+	// that the schedule and the list can name them without asking the chat
+	// server on every page view.
+	LeaderName string
+	// LeaderUsername is the leader's Mattermost username, lowercased and
+	// without the @. It is the only way the site can reach a person, so a team
+	// without one is a team nobody hears from.
+	LeaderUsername string
+	Position       int
+	Active         bool
 }
 
 // Label is the team's name with its leader, for the schedule.
@@ -205,12 +212,12 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 CREATE TABLE IF NOT EXISTS teams (
-	id           INTEGER PRIMARY KEY AUTOINCREMENT,
-	name         TEXT NOT NULL,
-	leader_name  TEXT NOT NULL DEFAULT '',
-	leader_email TEXT NOT NULL DEFAULT '',
-	position     INTEGER NOT NULL DEFAULT 0,
-	active       INTEGER NOT NULL DEFAULT 1
+	id              INTEGER PRIMARY KEY AUTOINCREMENT,
+	name            TEXT NOT NULL,
+	leader_name     TEXT NOT NULL DEFAULT '',
+	leader_username TEXT NOT NULL DEFAULT '',
+	position        INTEGER NOT NULL DEFAULT 0,
+	active          INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS seasons (
@@ -276,7 +283,7 @@ CREATE TABLE IF NOT EXISTS standing (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_standing ON standing (email, weekday);
 
--- Which lists have been mailed, so a restart cannot send the same one twice.
+-- Which lists have been sent, so a restart cannot send the same one twice.
 CREATE TABLE IF NOT EXISTS notifications (
 	date      TEXT NOT NULL,
 	kind      TEXT NOT NULL,
@@ -327,6 +334,26 @@ func migrate(db *sql.DB) error {
 	// many vegetarians — and are now one choice for the whole registration.
 	// Anything that was partly vegan or vegetarian becomes that diet outright,
 	// since that is the meal the cooking team has to produce.
+	// The list used to be mailed to the team leader and is now sent to them in
+	// Mattermost. The address is not merely unused after the switch — nothing
+	// can be sent to it any more — so it goes rather than sitting in the table
+	// as stale personal data.
+	if has, err := hasColumn(db, "teams", "leader_username"); err != nil {
+		return err
+	} else if !has {
+		if _, err := db.Exec(
+			`ALTER TABLE teams ADD COLUMN leader_username TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add teams.leader_username: %w", err)
+		}
+	}
+	if has, err := hasColumn(db, "teams", "leader_email"); err != nil {
+		return err
+	} else if has {
+		if _, err := db.Exec(`ALTER TABLE teams DROP COLUMN leader_email`); err != nil {
+			return fmt.Errorf("drop teams.leader_email: %w", err)
+		}
+	}
+
 	for _, table := range []string{"registrations", "standing"} {
 		has, err := hasColumn(db, table, "diet")
 		if err != nil {
@@ -459,7 +486,7 @@ func boolStr(b bool) string {
 // Teams returns every team, in rotation order.
 func (s *Store) Teams(ctx context.Context) ([]Team, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, leader_name, leader_email, position, active
+		`SELECT id, name, leader_name, leader_username, position, active
 		 FROM teams ORDER BY position, id`)
 	if err != nil {
 		return nil, err
@@ -468,7 +495,7 @@ func (s *Store) Teams(ctx context.Context) ([]Team, error) {
 	var out []Team
 	for rows.Next() {
 		var t Team
-		if err := rows.Scan(&t.ID, &t.Name, &t.LeaderName, &t.LeaderEmail, &t.Position, &t.Active); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.LeaderName, &t.LeaderUsername, &t.Position, &t.Active); err != nil {
 			return nil, err
 		}
 		out = append(out, t)
@@ -511,9 +538,9 @@ func (s *Store) SaveTeam(ctx context.Context, t Team) (int64, error) {
 			return 0, err
 		}
 		res, err := tx.ExecContext(ctx,
-			`INSERT INTO teams (name, leader_name, leader_email, position, active)
+			`INSERT INTO teams (name, leader_name, leader_username, position, active)
 			 VALUES (?,?,?,?,?)`,
-			t.Name, t.LeaderName, t.LeaderEmail, next, t.Active)
+			t.Name, t.LeaderName, t.LeaderUsername, next, t.Active)
 		if err != nil {
 			return 0, err
 		}
@@ -524,8 +551,8 @@ func (s *Store) SaveTeam(ctx context.Context, t Team) (int64, error) {
 		return id, tx.Commit()
 	}
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE teams SET name=?, leader_name=?, leader_email=?, active=? WHERE id=?`,
-		t.Name, t.LeaderName, t.LeaderEmail, t.Active, t.ID)
+		`UPDATE teams SET name=?, leader_name=?, leader_username=?, active=? WHERE id=?`,
+		t.Name, t.LeaderName, t.LeaderUsername, t.Active, t.ID)
 	return t.ID, err
 }
 
@@ -994,7 +1021,8 @@ func (s *Store) DeleteStanding(ctx context.Context, email string, wd time.Weekda
 
 // ---------------------------------------------------------- notifications --
 
-// Notified reports whether a mail of this kind has already gone out for a date.
+// Notified reports whether a message of this kind has already gone out for a
+// date.
 func (s *Store) Notified(ctx context.Context, date, kind string) (bool, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx,
@@ -1002,7 +1030,7 @@ func (s *Store) Notified(ctx context.Context, date, kind string) (bool, error) {
 	return n > 0, err
 }
 
-// MarkNotified records a sent mail. It fails if one was already recorded,
+// MarkNotified records a sent message. It fails if one was already recorded,
 // which is what keeps two server instances from both sending.
 func (s *Store) MarkNotified(ctx context.Context, date, kind, recipient string, at time.Time) error {
 	_, err := s.db.ExecContext(ctx,
@@ -1011,7 +1039,7 @@ func (s *Store) MarkNotified(ctx context.Context, date, kind, recipient string, 
 	return err
 }
 
-// ClearNotified forgets that a mail was sent, so the administrator can ask for
+// ClearNotified forgets that a message was sent, so the administrator can ask for
 // it again.
 func (s *Store) ClearNotified(ctx context.Context, date, kind string) error {
 	_, err := s.db.ExecContext(ctx,
@@ -1019,14 +1047,16 @@ func (s *Store) ClearNotified(ctx context.Context, date, kind string) error {
 	return err
 }
 
-// Notification is one line of the mail log.
+// Notification is one line of the notification log.
 type Notification struct {
-	Date      string
+	Date string
+	// Recipient is the Mattermost username the list was sent to.
 	Recipient string
 	SentAt    time.Time
 }
 
-// SentNotifications returns the mail log for dates in [from, to], by date.
+// SentNotifications returns the notification log for dates in [from, to], by
+// date.
 func (s *Store) SentNotifications(ctx context.Context, from, to string) (map[string]Notification, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT date, recipient, sent_at FROM notifications

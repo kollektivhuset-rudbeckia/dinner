@@ -110,6 +110,30 @@
 		});
 	}
 
+	// --- Who is in the house ------------------------------------------------
+	// The team leader is named by their Mattermost username, and remembering
+	// usernames is not something anybody should have to do. The list of
+	// accounts is fetched once and offered as suggestions; without this the
+	// field is still a plain text box that takes a username or a name.
+	var members = document.querySelector('[data-member-list]');
+	if (members && window.fetch) {
+		fetch(members.getAttribute('data-member-list'), { credentials: 'same-origin' })
+			.then(function (response) { return response.ok ? response.json() : null; })
+			.then(function (data) {
+				if (!data || !data.users) { return; }
+				data.users.forEach(function (user) {
+					var option = document.createElement('option');
+					option.value = user.username;
+					// Browsers show the label beside the value, so the
+					// administrator picks a person rather than a string.
+					option.label = user.name;
+					option.textContent = user.name;
+					members.appendChild(option);
+				});
+			})
+			.catch(function () { /* the field works without suggestions */ });
+	}
+
 	// --- Print button on the list -------------------------------------------
 	var print = document.querySelector('[data-print]');
 	if (print) {

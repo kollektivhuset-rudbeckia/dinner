@@ -292,9 +292,9 @@ func TestTheListAndItsDietsFollowTheLanguage(t *testing.T) {
 	}
 }
 
-// The cooking-team leader's mail cannot follow a browser cookie, because it is
-// not sent to a browser. It follows the deployment's own language.
-func TestTheMailUsesTheConfiguredLanguage(t *testing.T) {
+// The cooking-team leader's message cannot follow a browser cookie, because it
+// is not sent to a browser. It follows the deployment's own language.
+func TestTheMessageUsesTheConfiguredLanguage(t *testing.T) {
 	h := newHarness(t)
 	if got := h.defaultLang(); got != i18n.SV {
 		t.Fatalf("the test harness should be Swedish, got %q", got)
@@ -305,7 +305,7 @@ func TestTheMailUsesTheConfiguredLanguage(t *testing.T) {
 	if got := h.defaultLang(); got != i18n.SV {
 		t.Errorf("defaultLang = %q after a reader switched language", got)
 	}
-	if got := i18n.T(h.defaultLang(), "mail.open"); got != "Öppna matlistan" {
-		t.Errorf("the mail would say %q", got)
+	if got := i18n.T(h.defaultLang(), "chat.open"); got != "Öppna matlistan" {
+		t.Errorf("the message would say %q", got)
 	}
 }

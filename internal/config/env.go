@@ -18,7 +18,7 @@ const (
 
 // DefaultBaseURL is where BASE_URL lands when nobody sets it. It is fine for
 // running on your own machine and wrong for anything else: it is the address
-// that goes into the mail to the cooking team and into the formula a
+// that goes into the message to the cooking team and into the formula a
 // spreadsheet fetches, so a deployment that leaves it alone hands out links
 // that point at the reader's own computer.
 const DefaultBaseURL = "http://localhost:8080"
@@ -40,16 +40,9 @@ func LoadRuntime() (Runtime, error) {
 		AdminPassword: os.Getenv("ADMIN_PASSWORD"),
 		SessionMaxAge: time.Duration(envInt("SESSION_DAYS", 90)) * 24 * time.Hour,
 		TrustProxy:    envBool("TRUST_PROXY", true),
-		Mail: MailSettings{
-			Host:       os.Getenv("SMTP_HOST"),
-			Port:       envInt("SMTP_PORT", 587),
-			Username:   os.Getenv("SMTP_USER"),
-			Password:   os.Getenv("SMTP_PASSWORD"),
-			From:       os.Getenv("SMTP_FROM"),
-			FromName:   env("SMTP_FROM_NAME", "Rudbeckia middagar"),
-			Encryption: strings.ToLower(env("SMTP_ENCRYPTION", "starttls")),
-			ReplyTo:    os.Getenv("SMTP_REPLY_TO"),
-			BCC:        os.Getenv("SMTP_BCC"),
+		Mattermost: MattermostSettings{
+			URL:   strings.TrimRight(strings.TrimSpace(os.Getenv("MATTERMOST_URL")), "/"),
+			Token: strings.TrimSpace(os.Getenv("MATTERMOST_TOKEN")),
 		},
 	}
 	if demo {
@@ -74,10 +67,15 @@ func LoadRuntime() (Runtime, error) {
 		sum := sha256.Sum256([]byte("rudbeckia-middag|" + rt.Password + "|" + rt.AdminPassword))
 		rt.SessionSecret = sum[:]
 	}
-	switch rt.Mail.Encryption {
-	case "starttls", "tls", "none":
-	default:
-		return rt, errors.New(`SMTP_ENCRYPTION must be one of "starttls", "tls", "none"`)
+	// Half a configuration is worse than none: it looks connected and quietly
+	// is not, so say so at startup instead of at the first deadline.
+	if (rt.Mattermost.URL == "") != (rt.Mattermost.Token == "") {
+		return rt, errors.New("set both MATTERMOST_URL and MATTERMOST_TOKEN, or neither")
+	}
+	if demo {
+		// The demo must never reach a real chat server, and never message
+		// anybody: its cooking teams are made up.
+		rt.Mattermost = MattermostSettings{}
 	}
 	return rt, nil
 }

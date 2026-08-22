@@ -19,7 +19,7 @@ import (
 
 	"github.com/O5ten/dinners/internal/auth"
 	"github.com/O5ten/dinners/internal/config"
-	"github.com/O5ten/dinners/internal/mail"
+	"github.com/O5ten/dinners/internal/mattermost"
 	"github.com/O5ten/dinners/internal/setup"
 	"github.com/O5ten/dinners/internal/store"
 	"github.com/O5ten/dinners/internal/web"
@@ -91,10 +91,7 @@ func check(log *slog.Logger) error {
 			cfg.Deadline.ParsedWeekday(), cfg.Deadline.Time, cfg.Deadline.WeeksBefore),
 		"teams", len(cfg.Teams))
 	for _, t := range cfg.Teams {
-		if t.Email != "" && !auth.ValidEmail(t.Email) {
-			return fmt.Errorf("team %q: %q is not an e-mail address", t.Name, t.Email)
-		}
-		log.Info("team", "name", t.Name, "leader", t.Leader, "email", t.Email)
+		log.Info("team", "name", t.Name, "leader", mattermost.Username(t.Mattermost))
 	}
 	if cfg.Season != nil {
 		log.Info("season", "name", cfg.Season.Name, "start", cfg.Season.Start, "end", cfg.Season.End)
@@ -124,6 +121,25 @@ func run(log *slog.Logger) error {
 	ctx, stopCtx := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopCtx()
 
+	// The bot comes first: a first start seeds the cooking teams from the
+	// configuration file, and it is the chat server that knows how their
+	// leaders spell their names.
+	bot := mattermost.New(rt.Mattermost.URL, rt.Mattermost.Token, log)
+	if bot.Enabled() {
+		// Check the token now: a bot that cannot log in must be a startup
+		// complaint, not a mystery at the first deadline.
+		verify, cancel := context.WithTimeout(ctx, 20*time.Second)
+		me, err := bot.Verify(verify)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("mattermost: %w", err)
+		}
+		log.Info("mattermost bot ready", "server", rt.Mattermost.URL, "bot", me.Username)
+	} else {
+		log.Warn("Mattermost is not configured; the list is not sent to anybody, " +
+			"only written to the log")
+	}
+
 	if rt.Demo {
 		n, err := setup.Demo(ctx, st, cfg, time.Now())
 		if err != nil {
@@ -133,7 +149,7 @@ func run(log *slog.Logger) error {
 			"password", rt.Password, "admin_password", rt.AdminPassword,
 			"seeded_registrations", n, "database", rt.DBPath)
 	} else {
-		seeded, err := setup.Bootstrap(ctx, st, cfg)
+		seeded, err := setup.Bootstrap(ctx, st, cfg, bot)
 		if err != nil {
 			return fmt.Errorf("first-run setup: %w", err)
 		}
@@ -145,21 +161,17 @@ func run(log *slog.Logger) error {
 
 	secure := strings.HasPrefix(rt.BaseURL, "https://")
 	guard := auth.New(rt.Password, rt.AdminPassword, rt.SessionSecret, rt.SessionMaxAge, secure)
-	mailer := mail.NewSender(rt.Mail, log)
-	if !mailer.Enabled() {
-		log.Warn("SMTP is not configured; the matlist notifications will only be logged")
-	}
 	if !guard.HasAdmin() {
 		log.Warn("ADMIN_PASSWORD is not set; the /admin view is unavailable")
 	}
 	if rt.BaseURLUnset() && !rt.Demo {
 		log.Warn("BASE_URL is not set, so every link that leaves the site points at "+
-			"this machine: the mail to the cooking team, the address a spreadsheet "+
+			"this machine: the message to the cooking team, the address a spreadsheet "+
 			"fetches, and the link you give a guest",
 			"base_url", rt.BaseURL)
 	}
 
-	srv, err := web.New(cfg, rt, st, guard, mailer, log)
+	srv, err := web.New(cfg, rt, st, guard, bot, log)
 	if err != nil {
 		return err
 	}

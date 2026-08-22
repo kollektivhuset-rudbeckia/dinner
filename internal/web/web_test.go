@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -17,7 +18,7 @@ import (
 	"github.com/O5ten/dinners/internal/auth"
 	"github.com/O5ten/dinners/internal/config"
 	"github.com/O5ten/dinners/internal/dinner"
-	"github.com/O5ten/dinners/internal/mail"
+	"github.com/O5ten/dinners/internal/mattermost"
 	"github.com/O5ten/dinners/internal/store"
 )
 
@@ -51,9 +52,23 @@ type harness struct {
 	*Server
 	store *store.Store
 	teams []int64
+	// chat is the house's fake Mattermost, or nil when the site runs without
+	// one — which is what most of these tests do, since nearly every page has
+	// nothing to do with the chat server.
+	chat *fakeMattermost
 }
 
-func newHarness(t *testing.T) *harness {
+// newHarness builds a site with no chat server: lists are only logged.
+func newHarness(t *testing.T) *harness { return newHarnessWithChat(t, nil) }
+
+// newChatHarness builds a site wired to a fake Mattermost, for the parts that
+// really do send something.
+func newChatHarness(t *testing.T) *harness {
+	t.Helper()
+	return newHarnessWithChat(t, newFakeMattermost(t))
+}
+
+func newHarnessWithChat(t *testing.T, chat *fakeMattermost) *harness {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
@@ -71,22 +86,30 @@ func newHarness(t *testing.T) *harness {
 	t.Cleanup(func() { st.Close() })
 
 	rt := config.Runtime{BaseURL: "https://mat.example.se", TrustProxy: true}
+	if chat != nil {
+		rt.Mattermost = config.MattermostSettings{URL: chat.URL, Token: "tok"}
+	}
 	secret := [32]byte{7}
 	guard := auth.New("hus", "adm", secret[:], time.Hour, false)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv, err := New(cfg, rt, st, guard, mail.NewSender(rt.Mail, log), log)
+	srv, err := New(cfg, rt, st, guard,
+		mattermost.New(rt.Mattermost.URL, rt.Mattermost.Token, log), log)
 	if err != nil {
 		t.Fatal(err)
 	}
 	srv.now = func() time.Time { return testNow }
 
 	ctx := context.Background()
-	h := &harness{Server: srv, store: st}
-	for i, name := range []string{"Lag 1", "Lag 2"} {
+	h := &harness{Server: srv, store: st, chat: chat}
+	// The two teams are led by two of the people in the fake directory, so a
+	// list that goes out has somebody real to go to.
+	for i, team := range []struct{ name, leader, username string }{
+		{"Lag 1", "Mikael Östberg", "mikael.ostberg"},
+		{"Lag 2", "Cecilia Dahl", "cecilia.dahl"},
+	} {
 		id, err := st.SaveTeam(ctx, store.Team{
-			Name: name, LeaderName: name + "s ledare",
-			LeaderEmail: strings.ToLower(strings.ReplaceAll(name, " ", "")) + "@example.se",
-			Position:    i, Active: true,
+			Name: team.name, LeaderName: team.leader, LeaderUsername: team.username,
+			Position: i, Active: true,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -402,6 +425,20 @@ func TestRemovingTheStandingRegistration(t *testing.T) {
 	}
 }
 
+// dinner finds one evening in the generated schedule.
+func (h *harness) dinner(t *testing.T, key string) dinner.Dinner {
+	t.Helper()
+	world, err := h.world(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, ok := world.Schedule.Find(key)
+	if !ok {
+		t.Fatalf("no dinner on %s", key)
+	}
+	return d
+}
+
 func withWeekday(v url.Values, wd time.Weekday) url.Values {
 	v.Set("weekday", itoa(int(wd)))
 	return v
@@ -429,7 +466,7 @@ func TestOtherMembersNeverSeeYourAddress(t *testing.T) {
 
 // ------------------------------------------------------------- the matlist --
 
-func TestListNeedsAPasswordOrTheMailedKey(t *testing.T) {
+func TestListNeedsAPasswordOrTheSignedKey(t *testing.T) {
 	h := newHarness(t)
 	path := "/middag/" + openDay + "/lista"
 
@@ -578,8 +615,8 @@ func TestAdminManagesTeamsSeasonsAndBreaks(t *testing.T) {
 
 	// A new team.
 	rec := c.post("/admin/lag", url.Values{
-		"name": {"Lag 3"}, "leader_name": {"Cecilia"},
-		"leader_email": {"cecilia@example.se"}, "position": {"2"}, "active": {"1"},
+		"name": {"Lag 3"}, "leader_username": {"cecilia.dahl"},
+		"position": {"2"}, "active": {"1"},
 	})
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("save team = %d — %s", rec.Code, rec.Body.String())
@@ -589,10 +626,11 @@ func TestAdminManagesTeamsSeasonsAndBreaks(t *testing.T) {
 		t.Fatalf("got %d teams, want 3", len(teams))
 	}
 
-	// A team without a usable address would silently never get its list.
-	rec = c.post("/admin/lag", url.Values{"name": {"Lag 4"}, "leader_email": {"inte-en-adress"}})
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Errorf("bad leader address = %d, want 422", rec.Code)
+	// A team is saved with the leader's Mattermost username, since that is the
+	// only way the site can reach anybody. This site has no chat server to ask
+	// what she is called, so it invents nothing and leaves the name empty.
+	if teams[2].LeaderUsername != "cecilia.dahl" || teams[2].LeaderName != "" {
+		t.Errorf("Lag 3 was saved as %+v", teams[2])
 	}
 
 	// A break.
@@ -716,17 +754,17 @@ func TestAdminCSVExport(t *testing.T) {
 	}
 }
 
-// ------------------------------------------------------------- the mailing --
+// ------------------------------------------------------- the notification --
 
-// At the deadline the cooking team is told where the list is — once.
-func TestTheListIsMailedOnceWhenRegistrationCloses(t *testing.T) {
-	h := newHarness(t)
+// At the deadline the cooking team's leader is told what to cook — once.
+func TestTheListIsSentOnceWhenRegistrationCloses(t *testing.T) {
+	h := newChatHarness(t)
 	ctx := context.Background()
 
 	// Before the deadline, nothing goes out for the open evening.
 	h.runNotifications(ctx)
 	if done, _ := h.store.Notified(ctx, openDay, notifyKind); done {
-		t.Error("the open dinner should not have been mailed yet")
+		t.Error("the open dinner should not have been announced yet")
 	}
 	// The evening whose deadline has passed has been.
 	done, err := h.store.Notified(ctx, shutDay, notifyKind)
@@ -734,24 +772,112 @@ func TestTheListIsMailedOnceWhenRegistrationCloses(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !done {
-		t.Fatal("the closed dinner should have been mailed")
+		t.Fatal("the closed dinner should have been sent")
 	}
 	sent, _ := h.store.SentNotifications(ctx, "2026-08-01", "2026-08-31")
-	if log, ok := sent[shutDay]; !ok || log.Recipient == "" {
-		t.Errorf("the mail log should record who got it, got %+v", log)
+	log, ok := sent[shutDay]
+	if !ok {
+		t.Fatalf("nothing was recorded for %s", shutDay)
+	}
+	// The log records the account it went to, which is what the admin view
+	// shows and what a resend repeats.
+	dm := h.chat.waitForDM(t, 1)
+	if log.Recipient != dm.Username {
+		t.Errorf("the log says %q but the message went to %q", log.Recipient, dm.Username)
 	}
 
 	// Running again must not send a second time.
-	before := len(sent)
 	h.runNotifications(ctx)
-	after, _ := h.store.SentNotifications(ctx, "2026-08-01", "2026-08-31")
-	if len(after) != before {
-		t.Errorf("a second run sent more mail: %d then %d", before, len(after))
+	if got := h.chat.messages(); len(got) != 1 {
+		t.Errorf("a second run sent %d messages, want the one", len(got))
 	}
 }
 
-func TestCancelledEveningsAreNotMailed(t *testing.T) {
-	h := newHarness(t)
+// The message carries the numbers the team shops by, and a link for
+// everything else. Names and allergies stay on the list, where they are always
+// current and belong to the households who wrote them.
+func TestTheMessageCarriesTheTotalsAndALinkToTheList(t *testing.T) {
+	h := newChatHarness(t)
+	ctx := context.Background()
+
+	anna := h.client(t)
+	anna.member("Anna Andersson", "anna@example.se")
+	anna.post("/middag/"+openDay, party(2, 1, store.DietVegetarian, "glutenfritt"))
+	bo := h.client(t)
+	bo.member("Bo Bengtsson", "bo@example.se")
+	bo.post("/middag/"+openDay, party(1, 0, store.DietVegan, ""))
+
+	d := h.dinner(t, openDay)
+	if err := h.sendList(ctx, d); err != nil {
+		t.Fatalf("sendList: %v", err)
+	}
+	dm := h.chat.waitForDM(t, 1)
+
+	// Whichever team the rotation landed on, it is that team's leader who is
+	// told, and they are greeted by name.
+	if dm.Username != d.Team.LeaderUsername {
+		t.Errorf("the list went to %q, want %q", dm.Username, d.Team.LeaderUsername)
+	}
+	for _, want := range []string{
+		"Hej " + firstName(d.Team.LeaderName) + "!",
+		"tisdag 25 augusti",
+		"| **Hushåll** | 2 |",
+		"| **Vuxna** | 3 |",
+		"| **Barn** | 1 |",
+		"| **Portioner** | 4 |",
+		"| **Vegetarian** | 3 |",
+		"| **Vegan** | 1 |",
+		// Every pot is listed, even the ones nobody needs this week.
+		"| **Allätare** | 0 |",
+		"| **Allergier** | 1 |",
+		"[Öppna matlistan](https://mat.example.se/middag/" + openDay + "/lista?nyckel=",
+		"Maten serveras 18:00 i stora matsalen.",
+	} {
+		if !strings.Contains(dm.Message, want) {
+			t.Errorf("the message is missing %q:\n%s", want, dm.Message)
+		}
+	}
+	// And the link in it opens that one evening's list without a login.
+	link := dm.Message[strings.Index(dm.Message, "https://mat.example.se"):]
+	link = link[:strings.IndexByte(link, ')')]
+
+	// What is not in the message matters as much: the households and what they
+	// wrote. The signed key is opaque base64 and may spell anything at all, so
+	// it is taken out before reading the words.
+	words := strings.Replace(dm.Message, link, "", 1)
+	for _, unwanted := range []string{"Anna", "Bo", "glutenfritt"} {
+		if strings.Contains(words, unwanted) {
+			t.Errorf("the message gives away %q:\n%s", unwanted, dm.Message)
+		}
+	}
+
+	rec := h.client(t).get(strings.TrimPrefix(link, "https://mat.example.se"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("following the link from the message = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "glutenfritt") {
+		t.Error("the list itself should carry the allergies")
+	}
+}
+
+// An evening nobody has registered for still gets a message: the team needs to
+// know that too, and a silence is indistinguishable from a broken site.
+func TestAnEmptyEveningIsStillAnnounced(t *testing.T) {
+	h := newChatHarness(t)
+	if err := h.sendList(context.Background(), h.dinner(t, shutDay)); err != nil {
+		t.Fatalf("sendList: %v", err)
+	}
+	dm := h.chat.waitForDM(t, 1)
+	if !strings.Contains(dm.Message, "Ingen har anmält sig") {
+		t.Errorf("the message should say that nobody is coming:\n%s", dm.Message)
+	}
+	if strings.Contains(dm.Message, "| **Portioner** |") {
+		t.Errorf("there are no totals to give:\n%s", dm.Message)
+	}
+}
+
+func TestCancelledEveningsAreNotAnnounced(t *testing.T) {
+	h := newChatHarness(t)
 	ctx := context.Background()
 	if err := h.store.SaveOverride(ctx, store.Override{
 		Date: shutDay, Cancelled: true, UpdatedAt: testNow,
@@ -760,39 +886,193 @@ func TestCancelledEveningsAreNotMailed(t *testing.T) {
 	}
 	h.runNotifications(ctx)
 	if done, _ := h.store.Notified(ctx, shutDay, notifyKind); done {
-		t.Error("a cancelled dinner should not be mailed")
+		t.Error("a cancelled dinner should not be announced")
+	}
+	if got := h.chat.messages(); len(got) != 0 {
+		t.Errorf("a cancelled dinner sent %d messages", len(got))
 	}
 }
 
-// The mail is a pointer to the list, never the list itself.
-func TestTheMailedLinkOpensTheListAndCarriesNoNames(t *testing.T) {
+// A team with no leader username has nobody to tell. That is recorded as such,
+// so the notifier stops trying and the schedule shows it as something to fix.
+func TestAnEveningWithoutALeaderIsRecordedRatherThanRetried(t *testing.T) {
+	h := newChatHarness(t)
+	ctx := context.Background()
+	teams, _ := h.store.Teams(ctx)
+	for _, team := range teams {
+		team.LeaderUsername = ""
+		if _, err := h.store.SaveTeam(ctx, team); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	h.runNotifications(ctx)
+	if got := h.chat.messages(); len(got) != 0 {
+		t.Errorf("%d messages went out with no leader to send them to", len(got))
+	}
+	sent, _ := h.store.SentNotifications(ctx, "2026-08-01", "2026-08-31")
+	if log, ok := sent[shutDay]; !ok || log.Recipient != noTeam {
+		t.Errorf("the log should mark the evening as having nobody to tell, got %+v", log)
+	}
+}
+
+// A leader who lost the message, or a list worth repeating after a late
+// change, is what the schedule's "send again" is for.
+func TestTheAdministratorCanSendTheListAgain(t *testing.T) {
+	h := newChatHarness(t)
+	ctx := context.Background()
+	h.runNotifications(ctx)
+	h.chat.waitForDM(t, 1)
+
+	c := h.client(t)
+	c.login("adm")
+	c.identify("Chef", "chef@example.se")
+	rec := c.post("/admin/skicka", url.Values{"date": {shutDay}})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("send again = %d — %s", rec.Code, rec.Body.String())
+	}
+	leader := h.dinner(t, shutDay).Team.LeaderUsername
+	again := h.chat.waitForDM(t, 2)
+	if again.Username != leader {
+		t.Errorf("the second message went to %q, want %q", again.Username, leader)
+	}
+	// The log still says when the leader last heard from us.
+	sent, _ := h.store.SentNotifications(ctx, "2026-08-01", "2026-08-31")
+	if log, ok := sent[shutDay]; !ok || log.Recipient != leader {
+		t.Errorf("the log after resending = %+v", log)
+	}
+}
+
+// Without a chat server nothing can be delivered. The site has to keep working
+// and say so, rather than claiming the team was told.
+func TestWithoutMattermostTheListIsOnlyLogged(t *testing.T) {
 	h := newHarness(t)
-	anna := h.client(t)
-	anna.member("Anna Andersson", "anna@example.se")
-	anna.post("/middag/"+openDay, party(2, 0, store.DietVegetarian, "glutenfritt"))
-
-	world, _ := h.world(context.Background())
-	d, ok := world.Schedule.Find(openDay)
-	if !ok {
-		t.Fatal("dinner missing")
+	ctx := context.Background()
+	h.runNotifications(ctx)
+	if done, _ := h.store.Notified(ctx, shutDay, notifyKind); !done {
+		t.Error("the notification should still be recorded so it is not retried forever")
 	}
-	link := h.listURL(d)
-	if !strings.HasPrefix(link, "https://mat.example.se/middag/"+openDay+"/lista?nyckel=") {
-		t.Fatalf("link = %q", link)
+	body := h.client(t).get("/login").Body.String()
+	if !strings.Contains(body, "Utan utskick") {
+		t.Error("every page should say that nothing is being sent")
+	}
+}
+
+// -------------------------------------------------------- naming a leader --
+
+func TestNamingACookingTeamLeader(t *testing.T) {
+	for _, tc := range []struct {
+		name, typed, want string
+		status            int
+	}{
+		{"a username", "cecilia.dahl", "cecilia.dahl", http.StatusSeeOther},
+		{"a pasted mention", "@cecilia.dahl", "cecilia.dahl", http.StatusSeeOther},
+		{"a full name", "Cecilia Dahl", "cecilia.dahl", http.StatusSeeOther},
+		{"nobody at all", "", "", http.StatusSeeOther},
+		{"a stranger", "hittepa.person", "", http.StatusUnprocessableEntity},
+		// Two people are called Anna Andersson, and picking one of them is not
+		// ours to do.
+		{"two people at once", "Anna Andersson", "", http.StatusUnprocessableEntity},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newChatHarness(t)
+			c := h.client(t)
+			c.login("adm")
+			c.identify("Chef", "chef@example.se")
+
+			rec := c.post("/admin/lag", url.Values{
+				"name": {"Lag 3"}, "leader_username": {tc.typed}, "active": {"1"},
+			})
+			if rec.Code != tc.status {
+				t.Fatalf("save = %d, want %d — %s", rec.Code, tc.status, rec.Body.String())
+			}
+			teams, _ := h.store.Teams(context.Background())
+			if tc.status != http.StatusSeeOther {
+				if len(teams) != 2 {
+					t.Fatalf("the team was saved anyway: %+v", teams)
+				}
+				return
+			}
+			if len(teams) != 3 {
+				t.Fatalf("got %d teams", len(teams))
+			}
+			if teams[2].LeaderUsername != tc.want {
+				t.Errorf("leader = %q, want %q", teams[2].LeaderUsername, tc.want)
+			}
+		})
+	}
+}
+
+// Nobody types a leader's name: it is spelled the way its owner spells it on
+// their account, so the schedule and the list read the way the house does. A
+// name posted by an older form is ignored rather than kept alongside it.
+func TestALeadersNameComesFromTheirAccount(t *testing.T) {
+	h := newChatHarness(t)
+	c := h.client(t)
+	c.login("adm")
+	c.identify("Chef", "chef@example.se")
+	c.post("/admin/lag", url.Values{
+		"name": {"Lag 3"}, "leader_username": {"mikael.ostberg"}, "active": {"1"},
+		"leader_name": {"Mickey"},
+	})
+	teams, _ := h.store.Teams(context.Background())
+	if len(teams) != 3 || teams[2].LeaderName != "Mikael Östberg" {
+		t.Errorf("teams = %+v", teams)
 	}
 
-	// Following it, as the leader would, shows the list without a login.
-	path := strings.TrimPrefix(link, "https://mat.example.se")
-	rec := h.client(t).get(path)
+	// Taking the username away takes the name with it: there is nobody to name.
+	c.post("/admin/lag", url.Values{
+		"id": {itoa(int(teams[2].ID))}, "name": {"Lag 3"},
+		"leader_username": {""}, "active": {"1"},
+	})
+	teams, _ = h.store.Teams(context.Background())
+	if teams[2].LeaderName != "" || teams[2].LeaderUsername != "" {
+		t.Errorf("the team kept a leader it no longer has: %+v", teams[2])
+	}
+}
+
+// Remembering usernames is not something an administrator should have to do,
+// so the teams page offers the house — once, from a cache, and only to an
+// administrator.
+func TestTheTeamsPageOffersTheHouse(t *testing.T) {
+	h := newChatHarness(t)
+	c := h.client(t)
+	c.login("adm")
+	c.identify("Chef", "chef@example.se")
+
+	rec := c.get("/admin/mattermost")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("following the mailed link = %d", rec.Code)
+		t.Fatalf("member list = %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "Anna Andersson") {
-		t.Error("the list should show the household")
+	var got memberList
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v — %s", err, rec.Body.String())
 	}
-	// The reader is not logged in, so the house navigation is not offered.
-	if strings.Contains(rec.Body.String(), `href="/mina"`) {
-		t.Error("a key-only reader should not be shown the member navigation")
+	if len(got.Users) != 5 || got.Truncated {
+		t.Fatalf("offered %+v", got)
+	}
+	// Sorted by the name the administrator reads, and nobody who has left.
+	if got.Users[0].Name != "Anna Andersson" || got.Users[len(got.Users)-1].Name != "Mikael Östberg" {
+		t.Errorf("the list is not in name order: %+v", got.Users)
+	}
+	for _, u := range got.Users {
+		if u.Username == "gammal.granne" {
+			t.Error("somebody who has moved out is still offered as a team leader")
+		}
+	}
+
+	// Opening the page again reuses the listing rather than paging through the
+	// whole server on every view.
+	c.get("/admin/mattermost")
+	if n := h.chat.requests("users"); n != 1 {
+		t.Errorf("the directory was fetched %d times, want once", n)
+	}
+
+	// It is behind the admin gate, like the page that uses it.
+	member := h.client(t)
+	member.member("Anna", "anna@example.se")
+	if rec := member.get("/admin/mattermost"); rec.Code != http.StatusForbidden {
+		t.Errorf("a member reading the house directory = %d, want 403", rec.Code)
 	}
 }
 
@@ -1069,7 +1349,7 @@ func TestANewTeamJoinsLast(t *testing.T) {
 	c.identify("Chef", "chef@example.se")
 
 	rec := c.post("/admin/lag", url.Values{
-		"name": {"Lag 3"}, "leader_email": {"c@example.se"}, "active": {"1"},
+		"name": {"Lag 3"}, "leader_username": {"cecilia.dahl"}, "active": {"1"},
 		// A stale field from an older form must not be honoured.
 		"position": {"0"},
 	})
@@ -1291,7 +1571,7 @@ func TestTheExportMarksStandingAndLeavesOutWhoSaidNo(t *testing.T) {
 
 // The export is the same capability as the list, so the mailed link opens it —
 // which is what lets a spreadsheet pull it in without logging in.
-func TestTheExportFollowsTheMailedKey(t *testing.T) {
+func TestTheExportFollowsTheSignedKey(t *testing.T) {
 	h := newHarness(t)
 	path := "/middag/" + openDay + "/lista.csv"
 	stranger := h.client(t)
