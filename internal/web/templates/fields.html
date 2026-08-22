@@ -88,3 +88,15 @@
 	{{end}}
 </div>
 {{end}}
+
+{{/* Keeping an evening in your own calendar. It is the same offer wherever it
+     appears: a file for the calendars that read files, and a link each for the
+     two web calendars people actually use. */}}
+{{define "calendar"}}
+<h2 class="section-title">{{t "cal.title"}}</h2>
+<div class="calbuttons">
+	<a class="button" href="{{.ICS}}">{{t "cal.ics"}} <small>{{t "cal.ics.hint"}}</small></a>
+	<a class="button" href="{{.Google}}" target="_blank" rel="noopener">{{t "cal.google"}}</a>
+	<a class="button ghost" href="{{.Outlook}}" target="_blank" rel="noopener">{{t "cal.outlook"}}</a>
+</div>
+{{end}}

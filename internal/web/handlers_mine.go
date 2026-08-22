@@ -26,7 +26,7 @@ func (s *Server) handleMine(w http.ResponseWriter, r *http.Request, v *view) {
 	}
 	v.GuestOpen = world.Settings.GuestOpen
 
-	standing, err := s.store.StandingByEmail(ctx, v.Ident.Email)
+	standing, err := s.store.StandingByMember(ctx, v.Ident.MMUsername)
 	if err != nil {
 		s.fail(w, r, "read standing registrations", err)
 		return
@@ -61,7 +61,7 @@ func (s *Server) handleMine(w http.ResponseWriter, r *http.Request, v *view) {
 	mine := make([]row, 0, len(upcoming))
 	for _, d := range upcoming {
 		sum := summaries[d.Key]
-		m := findMine(sum, v.Ident.Email)
+		m := findMine(sum, v.Ident.MMUsername)
 		if m == nil {
 			continue
 		}
@@ -132,7 +132,8 @@ func (s *Server) handleStanding(w http.ResponseWriter, r *http.Request, v *view)
 	}
 	err = s.store.SaveStanding(ctx, store.Standing{
 		ID:        auth.ID(),
-		Email:     v.Ident.Email,
+		Member:    v.Ident.MMUsername,
+		MMUserID:  v.Ident.MMUserID,
 		Weekday:   wd,
 		Name:      v.Ident.Name,
 		Apartment: v.Ident.Apartment,

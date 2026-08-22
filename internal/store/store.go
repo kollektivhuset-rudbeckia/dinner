@@ -75,10 +75,15 @@ func (d Diet) Valid() bool {
 // answer "we are not coming", which is what lets a household opt out of a
 // dinner their standing registration would otherwise cover.
 type Registration struct {
-	ID        string
-	Date      string
-	Kind      Kind
-	Email     string
+	ID   string
+	Date string
+	Kind Kind
+	// Member is the household's Mattermost username, lowercased and without
+	// the @. It is what one household's answers are found by; a guest has none.
+	Member string
+	// MMUserID is the immutable Mattermost account id, which is how the bot
+	// reaches the household with a confirmation.
+	MMUserID  string
 	Name      string
 	Apartment string
 	Host      string
@@ -105,8 +110,10 @@ func (r Registration) Guest() bool { return r.Kind == KindGuest }
 // the replacement for the permanent-registration sheet. A registration for a
 // specific date always wins over it.
 type Standing struct {
-	ID        string
-	Email     string
+	ID string
+	// Member is the household's Mattermost username, as on a registration.
+	Member    string
+	MMUserID  string
 	Weekday   time.Weekday
 	Name      string
 	Apartment string
@@ -248,7 +255,8 @@ CREATE TABLE IF NOT EXISTS registrations (
 	id          TEXT PRIMARY KEY,
 	date        TEXT NOT NULL,
 	kind        TEXT NOT NULL DEFAULT 'member',
-	email       TEXT NOT NULL DEFAULT '',
+	member      TEXT NOT NULL DEFAULT '',
+	mm_user_id  TEXT NOT NULL DEFAULT '',
 	name        TEXT NOT NULL,
 	apartment   TEXT NOT NULL DEFAULT '',
 	host        TEXT NOT NULL DEFAULT '',
@@ -261,17 +269,18 @@ CREATE TABLE IF NOT EXISTS registrations (
 	updated_at  TEXT NOT NULL,
 	created_ip  TEXT NOT NULL DEFAULT ''
 );
--- One answer per household per dinner. Guests are not covered: two visitors
--- may well share an address, or leave it out entirely.
+-- One answer per household per dinner. Guests are not covered: they have no
+-- account here at all and are found by their own token instead.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_reg_member
-	ON registrations (date, email) WHERE kind = 'member';
+	ON registrations (date, member) WHERE kind = 'member' AND member <> '';
 CREATE INDEX IF NOT EXISTS idx_reg_date ON registrations (date);
-CREATE INDEX IF NOT EXISTS idx_reg_email ON registrations (email, date);
+CREATE INDEX IF NOT EXISTS idx_reg_household ON registrations (member, date);
 CREATE INDEX IF NOT EXISTS idx_reg_token ON registrations (token);
 
 CREATE TABLE IF NOT EXISTS standing (
 	id          TEXT PRIMARY KEY,
-	email       TEXT NOT NULL,
+	member      TEXT NOT NULL,
+	mm_user_id  TEXT NOT NULL DEFAULT '',
 	weekday     INTEGER NOT NULL,
 	name        TEXT NOT NULL,
 	apartment   TEXT NOT NULL DEFAULT '',
@@ -281,7 +290,7 @@ CREATE TABLE IF NOT EXISTS standing (
 	note        TEXT NOT NULL DEFAULT '',
 	updated_at  TEXT NOT NULL
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_standing ON standing (email, weekday);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_standing ON standing (member, weekday);
 
 -- Which lists have been sent, so a restart cannot send the same one twice.
 CREATE TABLE IF NOT EXISTS notifications (
@@ -316,6 +325,11 @@ func Open(path string) (*Store, error) {
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("open database %s: %w", path, err)
 	}
+	// The columns and indexes an older database has to lose before the schema
+	// can be applied at all, then the schema, then the rest of the upgrades.
+	if err := prepare(db); err != nil {
+		return nil, fmt.Errorf("prepare database: %w", err)
+	}
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
@@ -323,6 +337,84 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("migrate database: %w", err)
 	}
 	return &Store{db: db}, nil
+}
+
+// prepare makes an older database fit for the current schema. It runs before
+// the schema is applied, because the indexes the schema creates name columns
+// that a database from an earlier version does not have yet.
+//
+// Households used to be identified by an e-mail address and are now identified
+// by their Mattermost account. One cannot be turned into the other — an
+// address is not a username — so the switch cannot be a backfill:
+//
+//   - The address itself goes. Nothing can be sent to it any more, so keeping
+//     it would only leave stale personal data in the table.
+//   - Standing registrations are removed. One with no household behind it
+//     would go on adding people to every dinner with nobody able to change it
+//     or withdraw it.
+//   - Registrations for dinners still to come go the same way, so that a
+//     household registering again is not counted twice. Evenings already
+//     served keep their rows: they are the house's history, and the cooking
+//     team's list for them stays exactly as it was.
+func prepare(db *sql.DB) error {
+	has, err := hasColumn(db, "registrations", "email")
+	if err != nil {
+		return err
+	}
+	if has {
+		// The indexes go first: SQLite refuses to drop a column an index names.
+		for _, index := range []string{"idx_reg_member", "idx_reg_email", "idx_standing"} {
+			if _, err := db.Exec(`DROP INDEX IF EXISTS ` + index); err != nil {
+				return fmt.Errorf("drop %s: %w", index, err)
+			}
+		}
+		if _, err := db.Exec(
+			`DELETE FROM registrations WHERE kind = 'member' AND date >= date('now')`); err != nil {
+			return fmt.Errorf("clear the registrations with no household: %w", err)
+		}
+		if _, err := db.Exec(`DELETE FROM standing`); err != nil {
+			return fmt.Errorf("clear the standing registrations: %w", err)
+		}
+		for _, table := range []string{"registrations", "standing"} {
+			gone, err := hasColumn(db, table, "email")
+			if err != nil {
+				return err
+			}
+			if !gone {
+				continue
+			}
+			if _, err := db.Exec(`ALTER TABLE ` + table + ` DROP COLUMN email`); err != nil {
+				return fmt.Errorf("drop %s.email: %w", table, err)
+			}
+		}
+	}
+
+	// The columns that replace the address: the household's account, and the
+	// id the bot needs to reach it with a confirmation. Both are added only to
+	// tables that already exist; a new database gets them from the schema.
+	for _, table := range []string{"registrations", "standing"} {
+		exists, err := hasTable(db, table)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			continue
+		}
+		for _, column := range []string{"member", "mm_user_id"} {
+			has, err := hasColumn(db, table, column)
+			if err != nil {
+				return err
+			}
+			if has {
+				continue
+			}
+			if _, err := db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column +
+				` TEXT NOT NULL DEFAULT ''`); err != nil {
+				return fmt.Errorf("add %s.%s: %w", table, column, err)
+			}
+		}
+	}
+	return nil
 }
 
 // migrate brings a database written by an older build up to date. There is no
@@ -381,6 +473,16 @@ func migrate(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+func hasTable(db *sql.DB, table string) (bool, error) {
+	rows, err := db.Query(
+		`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`, table)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	return rows.Next(), rows.Err()
 }
 
 func hasColumn(db *sql.DB, table, column string) (bool, error) {
@@ -800,14 +902,14 @@ func (s *Store) SaveOverride(ctx context.Context, o Override) error {
 
 // ---------------------------------------------------------- registrations --
 
-const regCols = `id, date, kind, email, name, apartment, host, adults, children,
-	diet, note, token, created_at, updated_at, created_ip`
+const regCols = `id, date, kind, member, mm_user_id, name, apartment, host,
+	adults, children, diet, note, token, created_at, updated_at, created_ip`
 
 func scanReg(row interface{ Scan(...any) error }) (Registration, error) {
 	var r Registration
 	var created, updated string
-	err := row.Scan(&r.ID, &r.Date, &r.Kind, &r.Email, &r.Name, &r.Apartment, &r.Host,
-		&r.Adults, &r.Children, &r.Diet, &r.Note, &r.Token,
+	err := row.Scan(&r.ID, &r.Date, &r.Kind, &r.Member, &r.MMUserID, &r.Name,
+		&r.Apartment, &r.Host, &r.Adults, &r.Children, &r.Diet, &r.Note, &r.Token,
 		&created, &updated, &r.CreatedIP)
 	if err != nil {
 		return r, err
@@ -849,16 +951,26 @@ func (s *Store) RegistrationsBetween(ctx context.Context, from, to string) ([]Re
 		WHERE date >= ? AND date <= ? ORDER BY date, kind, lower(name)`, from, to)
 }
 
+// Member normalizes a Mattermost username into the form used as the household
+// key: lowercase, no leading @.
+func Member(username string) string {
+	return strings.ToLower(strings.TrimPrefix(strings.TrimSpace(username), "@"))
+}
+
 // MemberRegistrations returns one household's own registrations from a date on.
-func (s *Store) MemberRegistrations(ctx context.Context, email, from string) ([]Registration, error) {
+func (s *Store) MemberRegistrations(ctx context.Context, member, from string) ([]Registration, error) {
 	return s.queryRegs(ctx, `SELECT `+regCols+` FROM registrations
-		WHERE kind = 'member' AND email = ? AND date >= ? ORDER BY date`, email, from)
+		WHERE kind = 'member' AND member = ? AND date >= ? ORDER BY date`,
+		Member(member), from)
 }
 
 // MemberRegistration returns one household's answer for one dinner.
-func (s *Store) MemberRegistration(ctx context.Context, date, email string) (Registration, error) {
+func (s *Store) MemberRegistration(ctx context.Context, date, member string) (Registration, error) {
+	if Member(member) == "" {
+		return Registration{}, ErrNotFound
+	}
 	row := s.db.QueryRowContext(ctx, `SELECT `+regCols+` FROM registrations
-		WHERE date = ? AND email = ? AND kind = 'member'`, date, email)
+		WHERE date = ? AND member = ? AND kind = 'member'`, date, Member(member))
 	r, err := scanReg(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
@@ -881,7 +993,7 @@ func (s *Store) RegistrationByToken(ctx context.Context, token string) (Registra
 
 // SaveRegistration inserts a registration, or replaces the household's earlier
 // answer for the same dinner. Guests are always inserted; they are identified
-// by their token, not their address.
+// by their token, not by an account.
 func (s *Store) SaveRegistration(ctx context.Context, r Registration) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -890,11 +1002,12 @@ func (s *Store) SaveRegistration(ctx context.Context, r Registration) error {
 	defer tx.Rollback()
 
 	if r.Kind == KindMember {
+		r.Member = Member(r.Member)
 		var id, token string
 		var created string
 		err := tx.QueryRowContext(ctx,
 			`SELECT id, token, created_at FROM registrations
-			 WHERE date = ? AND email = ? AND kind = 'member'`, r.Date, r.Email).
+			 WHERE date = ? AND member = ? AND kind = 'member'`, r.Date, r.Member).
 			Scan(&id, &token, &created)
 		switch {
 		case err == nil:
@@ -911,12 +1024,13 @@ func (s *Store) SaveRegistration(ctx context.Context, r Registration) error {
 	}
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO registrations (`+regCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		`INSERT INTO registrations (`+regCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(id) DO UPDATE SET
+		   mm_user_id=excluded.mm_user_id,
 		   name=excluded.name, apartment=excluded.apartment, host=excluded.host,
 		   adults=excluded.adults, children=excluded.children,
 		   diet=excluded.diet, note=excluded.note, updated_at=excluded.updated_at`,
-		r.ID, r.Date, r.Kind, r.Email, r.Name, r.Apartment, r.Host,
+		r.ID, r.Date, r.Kind, r.Member, r.MMUserID, r.Name, r.Apartment, r.Host,
 		r.Adults, r.Children, r.Diet, r.Note, r.Token,
 		utc(r.CreatedAt), utc(r.UpdatedAt), r.CreatedIP)
 	if err != nil {
@@ -943,15 +1057,15 @@ func (s *Store) DeleteRegistration(ctx context.Context, id string) error {
 
 // -------------------------------------------------------------- standing --
 
-const standingCols = `id, email, weekday, name, apartment, adults, children,
-	diet, note, updated_at`
+const standingCols = `id, member, mm_user_id, weekday, name, apartment,
+	adults, children, diet, note, updated_at`
 
 func scanStanding(row interface{ Scan(...any) error }) (Standing, error) {
 	var st Standing
 	var wd int
 	var updated string
-	err := row.Scan(&st.ID, &st.Email, &wd, &st.Name, &st.Apartment, &st.Adults,
-		&st.Children, &st.Diet, &st.Note, &updated)
+	err := row.Scan(&st.ID, &st.Member, &st.MMUserID, &wd, &st.Name, &st.Apartment,
+		&st.Adults, &st.Children, &st.Diet, &st.Note, &updated)
 	if err != nil {
 		return st, err
 	}
@@ -983,10 +1097,13 @@ func (s *Store) StandingFor(ctx context.Context, wd time.Weekday) ([]Standing, e
 		WHERE weekday = ? ORDER BY lower(name)`, int(wd))
 }
 
-// StandingByEmail returns one household's standing registrations.
-func (s *Store) StandingByEmail(ctx context.Context, email string) ([]Standing, error) {
+// StandingByMember returns one household's standing registrations.
+func (s *Store) StandingByMember(ctx context.Context, member string) ([]Standing, error) {
+	if Member(member) == "" {
+		return nil, nil
+	}
 	return s.queryStanding(ctx, `SELECT `+standingCols+` FROM standing
-		WHERE email = ? ORDER BY weekday`, email)
+		WHERE member = ? ORDER BY weekday`, Member(member))
 }
 
 // AllStanding returns every standing registration, for the admin view.
@@ -998,24 +1115,29 @@ func (s *Store) AllStanding(ctx context.Context) ([]Standing, error) {
 // SaveStanding writes a household's default for one weekday. A standing
 // registration with nobody in it is meaningless, so it is deleted instead.
 func (s *Store) SaveStanding(ctx context.Context, st Standing) error {
+	st.Member = Member(st.Member)
+	if st.Member == "" {
+		return fmt.Errorf("a standing registration needs a household")
+	}
 	if st.Adults+st.Children <= 0 {
-		return s.DeleteStanding(ctx, st.Email, st.Weekday)
+		return s.DeleteStanding(ctx, st.Member, st.Weekday)
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO standing (`+standingCols+`) VALUES (?,?,?,?,?,?,?,?,?,?)
-		 ON CONFLICT(email, weekday) DO UPDATE SET
+		`INSERT INTO standing (`+standingCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+		 ON CONFLICT(member, weekday) DO UPDATE SET
+		   mm_user_id=excluded.mm_user_id,
 		   name=excluded.name, apartment=excluded.apartment,
 		   adults=excluded.adults, children=excluded.children,
 		   diet=excluded.diet, note=excluded.note, updated_at=excluded.updated_at`,
-		st.ID, st.Email, int(st.Weekday), st.Name, st.Apartment, st.Adults,
-		st.Children, st.Diet, st.Note, utc(st.UpdatedAt))
+		st.ID, st.Member, st.MMUserID, int(st.Weekday), st.Name, st.Apartment,
+		st.Adults, st.Children, st.Diet, st.Note, utc(st.UpdatedAt))
 	return err
 }
 
 // DeleteStanding removes a household's default for one weekday.
-func (s *Store) DeleteStanding(ctx context.Context, email string, wd time.Weekday) error {
+func (s *Store) DeleteStanding(ctx context.Context, member string, wd time.Weekday) error {
 	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM standing WHERE email = ? AND weekday = ?`, email, int(wd))
+		`DELETE FROM standing WHERE member = ? AND weekday = ?`, Member(member), int(wd))
 	return err
 }
 

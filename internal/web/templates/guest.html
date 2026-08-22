@@ -21,8 +21,29 @@
 		</p>
 	</div>
 
-	{{if .Data.Saved}}<p class="alert alert-ok" role="status">{{t "guest.saved"}}</p>{{end}}
+	{{if .Data.Saved}}
+	<div class="confirm-mark" aria-hidden="true">
+		<svg viewBox="0 0 48 48" width="52" height="52" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+			<circle cx="24" cy="24" r="21"/><path d="m14 24.5 7 7 13-15"/>
+		</svg>
+	</div>
+	<p class="alert alert-ok" role="status">{{t "guest.confirmed"}} {{t "guest.confirmed.body"}}</p>
+	{{end}}
 	{{with .Data.Error}}<p class="alert alert-error" role="alert">{{.}}</p>{{end}}
+
+	{{/* What was registered, in a box the guest can read back — this page is
+	     the whole confirmation, since nothing is sent to them. */}}
+	<div class="receipt">
+		<div class="receipt-row"><span>{{t "guest.receipt.name"}}</span><strong>{{.Data.Form.Name}}</strong></div>
+		{{with .Data.Form.Host}}<div class="receipt-row"><span>{{t "guest.receipt.host"}}</span><strong>{{.}}</strong></div>{{end}}
+		<div class="receipt-row"><span>{{t "guest.receipt.count"}}</span><strong>
+			{{count "adult" .Data.Form.Adults}}{{if .Data.Form.Children}}, {{count "child" .Data.Form.Children}}{{end}}
+		</strong></div>
+		<div class="receipt-row"><span>{{t "guest.receipt.diet"}}</span><strong>{{dietLabel .Data.Form.Diet}}</strong></div>
+		{{with .Data.Form.Note}}<div class="receipt-row"><span>{{t "guest.receipt.note"}}</span><strong>{{.}}</strong></div>{{end}}
+	</div>
+
+	{{if and .Data.Coming .Data.Calendar}}{{template "calendar" .Data.Calendar}}{{end}}
 
 	{{if .Data.Open}}
 	<p class="summary">{{t "guest.keeplink" (dateTime $d.Closes)}}</p>
@@ -38,15 +59,6 @@
 	</section>
 	{{else}}
 	<p class="alert alert-warn">{{t "guest.toolate" (dateTime $d.Closes)}}</p>
-	<div class="receipt">
-		<div class="receipt-row"><span>{{t "guest.receipt.name"}}</span><strong>{{.Data.Form.Name}}</strong></div>
-		{{with .Data.Form.Host}}<div class="receipt-row"><span>{{t "guest.receipt.host"}}</span><strong>{{.}}</strong></div>{{end}}
-		<div class="receipt-row"><span>{{t "guest.receipt.count"}}</span><strong>
-			{{count "adult" .Data.Form.Adults}}{{if .Data.Form.Children}}, {{count "child" .Data.Form.Children}}{{end}}
-		</strong></div>
-		<div class="receipt-row"><span>{{t "guest.receipt.diet"}}</span><strong>{{dietLabel .Data.Form.Diet}}</strong></div>
-		{{with .Data.Form.Note}}<div class="receipt-row"><span>{{t "guest.receipt.note"}}</span><strong>{{.}}</strong></div>{{end}}
-	</div>
 	{{end}}
 </div>
 
@@ -103,12 +115,6 @@
 		<label for="{{$id}}-host">{{t "guest.host"}} <small>{{t "optional"}}</small></label>
 		<input id="{{$id}}-host" name="host" type="text" autocomplete="off"
 		       value="{{$f.Host}}" placeholder="Anna Andersson">
-	</div>
-	<div class="field field-wide">
-		<label for="{{$id}}-email">{{t "guest.email"}} <small>{{t "optional"}}</small></label>
-		<input id="{{$id}}-email" name="email" type="email" autocomplete="email"
-		       value="{{$f.Email}}" placeholder="kalle@example.se">
-		<small class="hint">{{t "guest.email.hint"}}</small>
 	</div>
 </div>
 {{template "countfields" dict "Form" $f "ID" $id

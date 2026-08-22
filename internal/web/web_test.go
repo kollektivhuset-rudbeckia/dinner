@@ -179,18 +179,20 @@ func (c *client) login(password string) {
 	}
 }
 
-func (c *client) identify(name, email string) {
+// identify says who this browser is: a Mattermost username, and the name the
+// cooking team reads on the list.
+func (c *client) identify(name, username string) {
 	c.t.Helper()
-	rec := c.post("/jagar", url.Values{"name": {name}, "email": {email}, "next": {"/"}})
+	rec := c.post("/jagar", url.Values{"name": {name}, "member": {username}, "next": {"/"}})
 	if rec.Code != http.StatusSeeOther {
 		c.t.Fatalf("identify: %d — %s", rec.Code, rec.Body.String())
 	}
 }
 
-func (c *client) member(name, email string) {
+func (c *client) member(name, username string) {
 	c.t.Helper()
 	c.login("hus")
-	c.identify(name, email)
+	c.identify(name, username)
 }
 
 // party is the shared part of every registration form: how many people, what
@@ -244,12 +246,13 @@ func TestAMemberMustSayWhoTheyAre(t *testing.T) {
 	if rec.Code != http.StatusSeeOther || !strings.HasPrefix(rec.Header().Get("Location"), "/jagar") {
 		t.Fatalf("expected a redirect to /jagar, got %d %q", rec.Code, rec.Header().Get("Location"))
 	}
-	// A rubbish address is refused rather than quietly stored.
-	rec = c.post("/jagar", url.Values{"name": {"Anna"}, "email": {"anna"}, "next": {"/"}})
+	// Saying nothing is refused rather than quietly stored.
+	rec = c.post("/jagar", url.Values{"name": {"Anna"}, "member": {""}, "next": {"/"}})
 	if rec.Code != http.StatusUnprocessableEntity {
-		t.Errorf("bad address = %d, want 422", rec.Code)
+		t.Errorf("no account = %d, want 422", rec.Code)
 	}
-	c.identify("Anna Andersson", "Anna@Example.SE")
+	// A pasted mention with capitals is the same household as the username.
+	c.identify("Anna Andersson", "@Anna.Andersson")
 	if rec := c.get("/"); rec.Code != http.StatusOK {
 		t.Errorf("GET / after identifying = %d", rec.Code)
 	}
@@ -258,13 +261,13 @@ func TestAMemberMustSayWhoTheyAre(t *testing.T) {
 func TestMemberCannotReachTheAdminView(t *testing.T) {
 	h := newHarness(t)
 	c := h.client(t)
-	c.member("Anna", "anna@example.se")
+	c.member("Anna", "anna.andersson")
 	if rec := c.get("/admin"); rec.Code != http.StatusForbidden {
 		t.Errorf("member at /admin = %d, want 403", rec.Code)
 	}
 	admin := h.client(t)
 	admin.login("adm")
-	admin.identify("Chef", "chef@example.se")
+	admin.identify("Chef", "cecilia.dahl")
 	if rec := admin.get("/admin"); rec.Code != http.StatusOK {
 		t.Errorf("admin at /admin = %d", rec.Code)
 	}
@@ -275,14 +278,14 @@ func TestMemberCannotReachTheAdminView(t *testing.T) {
 func TestRegisterForOneDinner(t *testing.T) {
 	h := newHarness(t)
 	c := h.client(t)
-	c.member("Anna Andersson", "anna@example.se")
+	c.member("Anna Andersson", "anna.andersson")
 
 	rec := c.post("/middag/"+openDay, party(2, 1, store.DietVegetarian, "glutenfritt för ett barn"))
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("register = %d — %s", rec.Code, rec.Body.String())
 	}
 
-	got, err := h.store.MemberRegistration(context.Background(), openDay, "anna@example.se")
+	got, err := h.store.MemberRegistration(context.Background(), openDay, "anna.andersson")
 	if err != nil {
 		t.Fatalf("stored registration: %v", err)
 	}
@@ -302,7 +305,7 @@ func TestRegisterForOneDinner(t *testing.T) {
 func TestRegistrationIsRefusedAfterTheDeadline(t *testing.T) {
 	h := newHarness(t)
 	c := h.client(t)
-	c.member("Anna", "anna@example.se")
+	c.member("Anna", "anna.andersson")
 
 	rec := c.post("/middag/"+shutDay, party(2, 0, store.DietOmnivore, ""))
 	if rec.Code != http.StatusUnprocessableEntity {
@@ -311,7 +314,7 @@ func TestRegistrationIsRefusedAfterTheDeadline(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "stängde") {
 		t.Error("the page should explain that registration has closed")
 	}
-	if _, err := h.store.MemberRegistration(context.Background(), shutDay, "anna@example.se"); err == nil {
+	if _, err := h.store.MemberRegistration(context.Background(), shutDay, "anna.andersson"); err == nil {
 		t.Error("nothing should have been stored")
 	}
 }
@@ -319,7 +322,7 @@ func TestRegistrationIsRefusedAfterTheDeadline(t *testing.T) {
 func TestImpossibleRegistrationsAreRefused(t *testing.T) {
 	h := newHarness(t)
 	c := h.client(t)
-	c.member("Anna", "anna@example.se")
+	c.member("Anna", "anna.andersson")
 
 	tests := []struct {
 		name string
@@ -342,7 +345,7 @@ func TestImpossibleRegistrationsAreRefused(t *testing.T) {
 			if rec.Code != http.StatusUnprocessableEntity {
 				t.Errorf("= %d, want 422", rec.Code)
 			}
-			if _, err := h.store.MemberRegistration(context.Background(), openDay, "anna@example.se"); err == nil {
+			if _, err := h.store.MemberRegistration(context.Background(), openDay, "anna.andersson"); err == nil {
 				t.Error("nothing should have been stored")
 			}
 		})
@@ -354,7 +357,7 @@ func TestImpossibleRegistrationsAreRefused(t *testing.T) {
 func TestStandingRegistrationCountsYouInAutomatically(t *testing.T) {
 	h := newHarness(t)
 	c := h.client(t)
-	c.member("Anna Andersson", "anna@example.se")
+	c.member("Anna Andersson", "anna.andersson")
 
 	rec := c.post("/stadigvarande", withWeekday(party(2, 2, store.DietOmnivore, "nötallergi"), time.Tuesday))
 	if rec.Code != http.StatusSeeOther {
@@ -362,7 +365,7 @@ func TestStandingRegistrationCountsYouInAutomatically(t *testing.T) {
 	}
 
 	// Nothing was written for the individual evening...
-	if _, err := h.store.MemberRegistration(context.Background(), openDay, "anna@example.se"); err == nil {
+	if _, err := h.store.MemberRegistration(context.Background(), openDay, "anna.andersson"); err == nil {
 		t.Error("a standing registration should not write a row per dinner")
 	}
 	// ...but the household is on the list all the same.
@@ -382,7 +385,7 @@ func TestStandingRegistrationCountsYouInAutomatically(t *testing.T) {
 func TestSkippingOneEveningBeatsTheStandingRegistration(t *testing.T) {
 	h := newHarness(t)
 	c := h.client(t)
-	c.member("Anna", "anna@example.se")
+	c.member("Anna", "anna.andersson")
 	c.post("/stadigvarande", withWeekday(party(2, 0, store.DietOmnivore, ""), time.Tuesday))
 
 	rec := c.post("/middag/"+openDay, url.Values{"action": {"decline"}})
@@ -407,17 +410,17 @@ func TestSkippingOneEveningBeatsTheStandingRegistration(t *testing.T) {
 func TestRemovingTheStandingRegistration(t *testing.T) {
 	h := newHarness(t)
 	c := h.client(t)
-	c.member("Anna", "anna@example.se")
+	c.member("Anna", "anna.andersson")
 	c.post("/stadigvarande", withWeekday(party(2, 0, store.DietOmnivore, ""), time.Tuesday))
 
-	if list, _ := h.store.StandingByEmail(context.Background(), "anna@example.se"); len(list) != 1 {
+	if list, _ := h.store.StandingByMember(context.Background(), "anna.andersson"); len(list) != 1 {
 		t.Fatal("standing registration was not saved")
 	}
 	rec := c.post("/stadigvarande", withWeekday(url.Values{"action": {"clear"}}, time.Tuesday))
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("clear = %d", rec.Code)
 	}
-	if list, _ := h.store.StandingByEmail(context.Background(), "anna@example.se"); len(list) != 0 {
+	if list, _ := h.store.StandingByMember(context.Background(), "anna.andersson"); len(list) != 0 {
 		t.Errorf("standing registration should be gone, got %+v", list)
 	}
 	if strings.Contains(c.get("/middag/"+openDay+"/lista").Body.String(), "Anna") {
@@ -445,22 +448,22 @@ func withWeekday(v url.Values, wd time.Weekday) url.Values {
 }
 
 // One household's address is nobody else's business.
-func TestOtherMembersNeverSeeYourAddress(t *testing.T) {
+func TestOtherMembersNeverSeeYourAccount(t *testing.T) {
 	h := newHarness(t)
 	anna := h.client(t)
-	anna.member("Anna Andersson", "anna@example.se")
+	anna.member("Anna Andersson", "anna.andersson")
 	anna.post("/middag/"+openDay, party(2, 0, store.DietOmnivore, ""))
 
 	bo := h.client(t)
-	bo.member("Bo Bengtsson", "bo@example.se")
+	bo.member("Bo Bengtsson", "bo.bengtsson")
 	for _, path := range []string{"/", "/middag/" + openDay, "/middag/" + openDay + "/lista", "/mina"} {
-		if body := bo.get(path).Body.String(); strings.Contains(body, "anna@example.se") {
-			t.Errorf("%s leaks Anna's address", path)
+		if body := bo.get(path).Body.String(); strings.Contains(body, "anna.andersson") {
+			t.Errorf("%s leaks Anna's username", path)
 		}
 	}
 	// Her own page still shows it to her.
-	if !strings.Contains(anna.get("/mina").Body.String(), "anna@example.se") {
-		t.Error("a member should see their own address")
+	if !strings.Contains(anna.get("/mina").Body.String(), "anna.andersson") {
+		t.Error("a member should see their own username")
 	}
 }
 
@@ -499,10 +502,10 @@ func TestListNeedsAPasswordOrTheSignedKey(t *testing.T) {
 func TestListShowsTheAggregatesTheCookingTeamNeeds(t *testing.T) {
 	h := newHarness(t)
 	anna := h.client(t)
-	anna.member("Anna", "anna@example.se")
+	anna.member("Anna", "anna.andersson")
 	anna.post("/middag/"+openDay, party(2, 2, store.DietVegetarian, "glutenfritt"))
 	bo := h.client(t)
-	bo.member("Bo", "bo@example.se")
+	bo.member("Bo", "bo.bengtsson")
 	bo.post("/middag/"+openDay, party(1, 0, store.DietVegan, ""))
 
 	body := anna.get("/middag/" + openDay + "/lista").Body.String()
@@ -593,11 +596,11 @@ func TestGuestPageCanBeTurnedOff(t *testing.T) {
 func TestGuestPageShowsNobodyElse(t *testing.T) {
 	h := newHarness(t)
 	anna := h.client(t)
-	anna.member("Zäta Zettergren", "zeta@example.se")
+	anna.member("Zäta Zettergren", "zeta.zettergren")
 	anna.post("/middag/"+openDay, party(2, 0, store.DietOmnivore, "kikärtsallergi"))
 
 	body := h.client(t).get("/gast").Body.String()
-	for _, secret := range []string{"Zäta Zettergren", "zeta@example.se", "kikärtsallergi"} {
+	for _, secret := range []string{"Zäta Zettergren", "zeta.zettergren", "kikärtsallergi"} {
 		if strings.Contains(body, secret) {
 			t.Errorf("the public guest page leaks %q", secret)
 		}
@@ -611,7 +614,7 @@ func TestAdminManagesTeamsSeasonsAndBreaks(t *testing.T) {
 	ctx := context.Background()
 	c := h.client(t)
 	c.login("adm")
-	c.identify("Chef", "chef@example.se")
+	c.identify("Chef", "cecilia.dahl")
 
 	// A new team.
 	rec := c.post("/admin/lag", url.Values{
@@ -663,7 +666,7 @@ func TestAdminCancelsAnEveningAndSwapsATeam(t *testing.T) {
 	h := newHarness(t)
 	c := h.client(t)
 	c.login("adm")
-	c.identify("Chef", "chef@example.se")
+	c.identify("Chef", "cecilia.dahl")
 
 	rec := c.post("/admin/schema", url.Values{
 		"date": {openDay}, "cancelled": {"1"}, "note": {"Festkommittén har lokalen"},
@@ -678,7 +681,7 @@ func TestAdminCancelsAnEveningAndSwapsATeam(t *testing.T) {
 
 	// Nobody can register for a cancelled evening.
 	member := h.client(t)
-	member.member("Anna", "anna@example.se")
+	member.member("Anna", "anna.andersson")
 	if rec := member.post("/middag/"+openDay, party(2, 0, store.DietOmnivore, "")); rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("registering for a cancelled dinner = %d, want 422", rec.Code)
 	}
@@ -704,7 +707,7 @@ func TestAdminSettingsMoveTheDeadline(t *testing.T) {
 	h := newHarness(t)
 	c := h.client(t)
 	c.login("adm")
-	c.identify("Chef", "chef@example.se")
+	c.identify("Chef", "cecilia.dahl")
 
 	rec := c.post("/admin/installningar", url.Values{
 		"deadline_weekday":      {itoa(int(time.Wednesday))},
@@ -733,12 +736,12 @@ func TestAdminSettingsMoveTheDeadline(t *testing.T) {
 func TestAdminCSVExport(t *testing.T) {
 	h := newHarness(t)
 	anna := h.client(t)
-	anna.member("Anna Andersson", "anna@example.se")
+	anna.member("Anna Andersson", "anna.andersson")
 	anna.post("/middag/"+openDay, party(2, 1, store.DietVegetarian, "glutenfritt"))
 
 	c := h.client(t)
 	c.login("adm")
-	c.identify("Chef", "chef@example.se")
+	c.identify("Chef", "cecilia.dahl")
 	rec := c.get("/admin/export.csv?fran=2026-08-01&till=2026-12-31")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("export = %d", rec.Code)
@@ -781,14 +784,15 @@ func TestTheListIsSentOnceWhenRegistrationCloses(t *testing.T) {
 	}
 	// The log records the account it went to, which is what the admin view
 	// shows and what a resend repeats.
-	dm := h.chat.waitForDM(t, 1)
+	leader := h.dinner(t, shutDay).Team.LeaderUsername
+	dm := h.chat.waitForDMTo(t, leader, 1)
 	if log.Recipient != dm.Username {
 		t.Errorf("the log says %q but the message went to %q", log.Recipient, dm.Username)
 	}
 
 	// Running again must not send a second time.
 	h.runNotifications(ctx)
-	if got := h.chat.messages(); len(got) != 1 {
+	if got := h.chat.messagesTo(leader); len(got) != 1 {
 		t.Errorf("a second run sent %d messages, want the one", len(got))
 	}
 }
@@ -801,23 +805,20 @@ func TestTheMessageCarriesTheTotalsAndALinkToTheList(t *testing.T) {
 	ctx := context.Background()
 
 	anna := h.client(t)
-	anna.member("Anna Andersson", "anna@example.se")
+	anna.member("Anna Andersson", "anna.andersson")
 	anna.post("/middag/"+openDay, party(2, 1, store.DietVegetarian, "glutenfritt"))
 	bo := h.client(t)
-	bo.member("Bo Bengtsson", "bo@example.se")
+	bo.member("Bo Bengtsson", "bo.bengtsson")
 	bo.post("/middag/"+openDay, party(1, 0, store.DietVegan, ""))
 
 	d := h.dinner(t, openDay)
 	if err := h.sendList(ctx, d); err != nil {
 		t.Fatalf("sendList: %v", err)
 	}
-	dm := h.chat.waitForDM(t, 1)
-
 	// Whichever team the rotation landed on, it is that team's leader who is
-	// told, and they are greeted by name.
-	if dm.Username != d.Team.LeaderUsername {
-		t.Errorf("the list went to %q, want %q", dm.Username, d.Team.LeaderUsername)
-	}
+	// told, and they are greeted by name. The households have been confirmed
+	// separately, so the list is found by who it went to.
+	dm := h.chat.waitForDMTo(t, d.Team.LeaderUsername, 1)
 	for _, want := range []string{
 		"Hej " + firstName(d.Team.LeaderName) + "!",
 		"tisdag 25 augusti",
@@ -864,10 +865,11 @@ func TestTheMessageCarriesTheTotalsAndALinkToTheList(t *testing.T) {
 // know that too, and a silence is indistinguishable from a broken site.
 func TestAnEmptyEveningIsStillAnnounced(t *testing.T) {
 	h := newChatHarness(t)
-	if err := h.sendList(context.Background(), h.dinner(t, shutDay)); err != nil {
+	d := h.dinner(t, shutDay)
+	if err := h.sendList(context.Background(), d); err != nil {
 		t.Fatalf("sendList: %v", err)
 	}
-	dm := h.chat.waitForDM(t, 1)
+	dm := h.chat.waitForDMTo(t, d.Team.LeaderUsername, 1)
 	if !strings.Contains(dm.Message, "Ingen har anmält sig") {
 		t.Errorf("the message should say that nobody is coming:\n%s", dm.Message)
 	}
@@ -921,19 +923,18 @@ func TestAnEveningWithoutALeaderIsRecordedRatherThanRetried(t *testing.T) {
 func TestTheAdministratorCanSendTheListAgain(t *testing.T) {
 	h := newChatHarness(t)
 	ctx := context.Background()
+	leader := h.dinner(t, shutDay).Team.LeaderUsername
 	h.runNotifications(ctx)
-	h.chat.waitForDM(t, 1)
+	h.chat.waitForDMTo(t, leader, 1)
 
 	c := h.client(t)
 	c.login("adm")
-	c.identify("Chef", "chef@example.se")
+	c.identify("Chef", "cecilia.dahl")
 	rec := c.post("/admin/skicka", url.Values{"date": {shutDay}})
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("send again = %d — %s", rec.Code, rec.Body.String())
 	}
-	leader := h.dinner(t, shutDay).Team.LeaderUsername
-	again := h.chat.waitForDM(t, 2)
-	if again.Username != leader {
+	if again := h.chat.waitForDMTo(t, leader, 2); again.Username != leader {
 		t.Errorf("the second message went to %q, want %q", again.Username, leader)
 	}
 	// The log still says when the leader last heard from us.
@@ -978,7 +979,7 @@ func TestNamingACookingTeamLeader(t *testing.T) {
 			h := newChatHarness(t)
 			c := h.client(t)
 			c.login("adm")
-			c.identify("Chef", "chef@example.se")
+			c.identify("Chef", "cecilia.dahl")
 
 			rec := c.post("/admin/lag", url.Values{
 				"name": {"Lag 3"}, "leader_username": {tc.typed}, "active": {"1"},
@@ -1010,7 +1011,7 @@ func TestALeadersNameComesFromTheirAccount(t *testing.T) {
 	h := newChatHarness(t)
 	c := h.client(t)
 	c.login("adm")
-	c.identify("Chef", "chef@example.se")
+	c.identify("Chef", "cecilia.dahl")
 	c.post("/admin/lag", url.Values{
 		"name": {"Lag 3"}, "leader_username": {"mikael.ostberg"}, "active": {"1"},
 		"leader_name": {"Mickey"},
@@ -1031,16 +1032,16 @@ func TestALeadersNameComesFromTheirAccount(t *testing.T) {
 	}
 }
 
-// Remembering usernames is not something an administrator should have to do,
-// so the teams page offers the house — once, from a cache, and only to an
-// administrator.
-func TestTheTeamsPageOffersTheHouse(t *testing.T) {
+// Remembering usernames is not something anybody should have to do, so the
+// pickers offer the house — once, from a cache, and only to somebody who is
+// already inside the house password.
+func TestThePickersOfferTheHouse(t *testing.T) {
 	h := newChatHarness(t)
 	c := h.client(t)
 	c.login("adm")
-	c.identify("Chef", "chef@example.se")
+	c.identify("Chef", "cecilia.dahl")
 
-	rec := c.get("/admin/mattermost")
+	rec := c.get("/medlemmar")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("member list = %d", rec.Code)
 	}
@@ -1051,28 +1052,48 @@ func TestTheTeamsPageOffersTheHouse(t *testing.T) {
 	if len(got.Users) != 5 || got.Truncated {
 		t.Fatalf("offered %+v", got)
 	}
-	// Sorted by the name the administrator reads, and nobody who has left.
+	// Sorted by the name the reader reads, and nobody who has left.
 	if got.Users[0].Name != "Anna Andersson" || got.Users[len(got.Users)-1].Name != "Mikael Östberg" {
 		t.Errorf("the list is not in name order: %+v", got.Users)
 	}
 	for _, u := range got.Users {
 		if u.Username == "gammal.granne" {
-			t.Error("somebody who has moved out is still offered as a team leader")
+			t.Error("somebody who has moved out is still offered")
 		}
 	}
 
-	// Opening the page again reuses the listing rather than paging through the
-	// whole server on every view.
-	c.get("/admin/mattermost")
+	// Asking again reuses the listing rather than paging through the whole
+	// server on every view.
+	c.get("/medlemmar")
 	if n := h.chat.requests("users"); n != 1 {
 		t.Errorf("the directory was fetched %d times, want once", n)
 	}
 
-	// It is behind the admin gate, like the page that uses it.
+	// A household needs it too — that is how it says who it is — so the gate is
+	// the house password rather than the admin one.
 	member := h.client(t)
-	member.member("Anna", "anna@example.se")
-	if rec := member.get("/admin/mattermost"); rec.Code != http.StatusForbidden {
-		t.Errorf("a member reading the house directory = %d, want 403", rec.Code)
+	member.member("Anna", "anna.andersson")
+	if rec := member.get("/medlemmar"); rec.Code != http.StatusOK {
+		t.Errorf("a member reading the house directory = %d, want 200", rec.Code)
+	}
+
+	// Nobody outside the house sees who lives here.
+	if rec := h.client(t).get("/medlemmar"); rec.Code != http.StatusSeeOther {
+		t.Errorf("a stranger reading the house directory = %d, want a redirect to the login", rec.Code)
+	}
+
+	// A name can also be searched for on the server, which is the fallback for
+	// a directory too large to hold in the browser.
+	rec = c.get("/medlemmar?q=" + url.QueryEscape("Östberg"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("search = %d", rec.Code)
+	}
+	var hits memberList
+	if err := json.Unmarshal(rec.Body.Bytes(), &hits); err != nil {
+		t.Fatal(err)
+	}
+	if len(hits.Users) != 1 || hits.Users[0].Username != "mikael.ostberg" {
+		t.Errorf("searching found %+v", hits.Users)
 	}
 }
 
@@ -1081,7 +1102,7 @@ func TestTheTeamsPageOffersTheHouse(t *testing.T) {
 func TestUnknownDinnerIsANotFound(t *testing.T) {
 	h := newHarness(t)
 	c := h.client(t)
-	c.member("Anna", "anna@example.se")
+	c.member("Anna", "anna.andersson")
 	// A Wednesday, which the season does not cook on.
 	if rec := c.get("/middag/2026-08-26"); rec.Code != http.StatusNotFound {
 		t.Errorf("= %d, want 404", rec.Code)
@@ -1139,7 +1160,7 @@ func TestAdminRefusesOverlappingSeasons(t *testing.T) {
 	ctx := context.Background()
 	c := h.client(t)
 	c.login("adm")
-	c.identify("Chef", "chef@example.se")
+	c.identify("Chef", "cecilia.dahl")
 
 	// The harness already has a season covering all of 2026.
 	rec := c.post("/admin/sasong", url.Values{
@@ -1199,7 +1220,7 @@ func TestAdminRemovesARegistrationFromTheList(t *testing.T) {
 
 	// A member cannot remove someone else's registration.
 	member := h.client(t)
-	member.member("Anna", "anna@example.se")
+	member.member("Anna", "anna.andersson")
 	if rec := member.post("/admin/anmalan", url.Values{"id": {regs[0].ID}}); rec.Code != http.StatusForbidden {
 		t.Errorf("member deleting = %d, want 403", rec.Code)
 	}
@@ -1209,7 +1230,7 @@ func TestAdminRemovesARegistrationFromTheList(t *testing.T) {
 
 	admin := h.client(t)
 	admin.login("adm")
-	admin.identify("Chef", "chef@example.se")
+	admin.identify("Chef", "cecilia.dahl")
 	// The control is offered on the list.
 	if body := admin.get("/middag/" + openDay + "/lista").Body.String(); !strings.Contains(body, "/admin/anmalan") {
 		t.Error("the admin should be offered a way to remove a registration")
@@ -1270,7 +1291,7 @@ func TestADeadlineWithNoCookingTeamIsRecordedAsUnmanned(t *testing.T) {
 	// The admin schedule says so rather than claiming a mail went out.
 	c := h.client(t)
 	c.login("adm")
-	c.identify("Chef", "chef@example.se")
+	c.identify("Chef", "cecilia.dahl")
 	body := c.get("/admin?flik=schema").Body.String()
 	if !strings.Contains(body, "inget lag") {
 		t.Error("the schedule should flag the evening as having had no team")
@@ -1284,7 +1305,7 @@ func TestAdminReordersTheRotation(t *testing.T) {
 	ctx := context.Background()
 	c := h.client(t)
 	c.login("adm")
-	c.identify("Chef", "chef@example.se")
+	c.identify("Chef", "cecilia.dahl")
 
 	order := func() []string {
 		t.Helper()
@@ -1346,7 +1367,7 @@ func TestANewTeamJoinsLast(t *testing.T) {
 	h := newHarness(t)
 	c := h.client(t)
 	c.login("adm")
-	c.identify("Chef", "chef@example.se")
+	c.identify("Chef", "cecilia.dahl")
 
 	rec := c.post("/admin/lag", url.Values{
 		"name": {"Lag 3"}, "leader_username": {"cecilia.dahl"}, "active": {"1"},
@@ -1407,7 +1428,7 @@ func TestAGuestPartyWithTwoDietsRegistersTwice(t *testing.T) {
 
 	// And both meals are named on the cooking team's list.
 	member := h.client(t)
-	member.member("Anna", "anna@example.se")
+	member.member("Anna", "anna.andersson")
 	body := member.get("/middag/" + openDay + "/lista").Body.String()
 	for _, want := range []string{"Allätare", "Vegan", "Kalle Svensson", "Maja Öberg"} {
 		if !strings.Contains(body, want) {
@@ -1421,7 +1442,7 @@ func TestAHouseholdHasOneDietPerDinner(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	c := h.client(t)
-	c.member("Anna", "anna@example.se")
+	c.member("Anna", "anna.andersson")
 
 	c.post("/middag/"+openDay, party(2, 1, store.DietOmnivore, ""))
 	c.post("/middag/"+openDay, party(2, 1, store.DietVegetarian, ""))
@@ -1459,10 +1480,10 @@ func mustFind(t *testing.T, h *harness, key string) dinner.Dinner {
 func TestTheListExportsAsASpreadsheet(t *testing.T) {
 	h := newHarness(t)
 	anna := h.client(t)
-	anna.member("Anna Andersson", "anna@example.se")
+	anna.member("Anna Andersson", "anna.andersson")
 	anna.post("/middag/"+openDay, party(2, 2, store.DietVegan, "inga nötter"))
 	bo := h.client(t)
-	bo.member("Bo Bengtsson", "bo@example.se")
+	bo.member("Bo Bengtsson", "bo.bengtsson")
 	bo.post("/middag/"+openDay, party(1, 0, store.DietFlexitarian, ""))
 
 	guest := h.client(t)
@@ -1545,11 +1566,11 @@ func TestTheListExportsAsASpreadsheet(t *testing.T) {
 func TestTheExportMarksStandingAndLeavesOutWhoSaidNo(t *testing.T) {
 	h := newHarness(t)
 	anna := h.client(t)
-	anna.member("Anna", "anna@example.se")
+	anna.member("Anna", "anna.andersson")
 	anna.post("/stadigvarande", withWeekday(party(2, 0, store.DietOmnivore, ""), time.Tuesday))
 
 	bo := h.client(t)
-	bo.member("Bo", "bo@example.se")
+	bo.member("Bo", "bo.bengtsson")
 	bo.post("/stadigvarande", withWeekday(party(1, 0, store.DietOmnivore, ""), time.Tuesday))
 	bo.post("/middag/"+openDay, url.Values{"action": {"decline"}})
 
@@ -1598,7 +1619,7 @@ func TestTheLiveFormulaIsOnlyOfferedToTheTeam(t *testing.T) {
 	h := newHarness(t)
 
 	member := h.client(t)
-	member.member("Anna", "anna@example.se")
+	member.member("Anna", "anna.andersson")
 	body := member.get("/middag/" + openDay + "/lista").Body.String()
 	if !strings.Contains(body, "lista.csv") {
 		t.Error("a member should be offered the download")
@@ -1609,7 +1630,7 @@ func TestTheLiveFormulaIsOnlyOfferedToTheTeam(t *testing.T) {
 
 	admin := h.client(t)
 	admin.login("adm")
-	admin.identify("Chef", "chef@example.se")
+	admin.identify("Chef", "cecilia.dahl")
 	body = admin.get("/middag/" + openDay + "/lista").Body.String()
 	if !strings.Contains(body, "IMPORTDATA") {
 		t.Error("the administrator should get the live formula")
@@ -1638,7 +1659,7 @@ func TestRegistrationIsImpossibleAfterTheDeadline(t *testing.T) {
 	ctx := context.Background()
 
 	member := h.client(t)
-	member.member("Anna", "anna@example.se")
+	member.member("Anna", "anna.andersson")
 	if rec := member.post("/middag/"+shutDay, party(2, 0, store.DietOmnivore, "")); rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("a member registering late = %d, want 422", rec.Code)
 	}
@@ -1683,7 +1704,7 @@ func TestAdminWarnsWhenTheSiteAddressIsUnset(t *testing.T) {
 	h := newHarness(t)
 	c := h.client(t)
 	c.login("adm")
-	c.identify("Chef", "chef@example.se")
+	c.identify("Chef", "cecilia.dahl")
 
 	// The harness is configured with a real address, so no warning.
 	if body := c.get("/admin").Body.String(); strings.Contains(body, "BASE_URL") {
@@ -1703,5 +1724,298 @@ func TestAdminWarnsWhenTheSiteAddressIsUnset(t *testing.T) {
 	h.rt.Demo = true
 	if body := c.get("/admin").Body.String(); strings.Contains(body, "BASE_URL") {
 		t.Error("the demo should not warn about its own address")
+	}
+}
+
+// ------------------------------------------ the confirmation and the calendar --
+
+// Registering is confirmed where the household already reads: a direct message
+// from the bot, with the evening attached for whatever calendar they keep. It
+// is what replaced the confirmation e-mail, so there is no address anywhere in
+// it.
+func TestRegisteringIsConfirmedInMattermost(t *testing.T) {
+	h := newChatHarness(t)
+	c := h.client(t)
+	c.member("Anna Andersson", "anna.andersson")
+
+	if rec := c.post("/middag/"+openDay, party(2, 1, store.DietVegetarian, "glutenfritt")); rec.Code != http.StatusSeeOther {
+		t.Fatalf("register = %d — %s", rec.Code, rec.Body.String())
+	}
+
+	dm := h.chat.waitForDMTo(t, "anna.andersson", 1)
+	for _, want := range []string{
+		"Hej Anna!",
+		"tisdag 25 augusti",
+		"| **Antal** | 2 vuxna, 1 barn |",
+		"| **Kosthållning** | Vegetarian |",
+		"| **Allergier** | glutenfritt |",
+		"| **Var** | stora matsalen |",
+		"https://mat.example.se/middag/" + openDay,
+	} {
+		if !strings.Contains(dm.Message, want) {
+			t.Errorf("the confirmation is missing %q:\n%s", want, dm.Message)
+		}
+	}
+	// The evening itself comes as a calendar file, so it can be kept without
+	// typing anything anywhere.
+	ics, ok := dm.Files["middag-"+openDay+".ics"]
+	if !ok || len(dm.Files) != 1 {
+		t.Fatalf("attachments = %v, want one calendar file", dm.Files)
+	}
+	if !strings.Contains(ics, "STATUS:CONFIRMED") || !strings.Contains(ics, "DTSTART:20260825T160000Z") {
+		t.Errorf("the attached evening reads:\n%s", ics)
+	}
+
+	// Changing the answer confirms the new one rather than the old.
+	c.post("/middag/"+openDay, party(1, 0, store.DietVegan, ""))
+	second := h.chat.waitForDMTo(t, "anna.andersson", 2)
+	if !strings.Contains(second.Message, "| **Antal** | 1 vuxen |") {
+		t.Errorf("the second confirmation should carry the new numbers:\n%s", second.Message)
+	}
+}
+
+// Saying "we are not coming" is an answer too, and it is confirmed as one —
+// with a cancellation for a calendar that already held the evening.
+func TestDecliningIsConfirmedAsNotComing(t *testing.T) {
+	h := newChatHarness(t)
+	c := h.client(t)
+	c.member("Anna Andersson", "anna.andersson")
+	form := party(0, 0, store.DietOmnivore, "")
+	form.Set("action", "decline")
+	c.post("/middag/"+openDay, form)
+
+	dm := h.chat.waitForDMTo(t, "anna.andersson", 1)
+	if !strings.Contains(dm.Message, "inte med") {
+		t.Errorf("the message should say they are not coming:\n%s", dm.Message)
+	}
+	if strings.Contains(dm.Message, "**Antal**") {
+		t.Errorf("there is nobody to count:\n%s", dm.Message)
+	}
+	// The evening still comes along, as a cancellation: a calendar that
+	// already held it should let go of it.
+	ics, ok := dm.Files["middag-"+openDay+".ics"]
+	if !ok {
+		t.Fatalf("attachments = %v, want the evening as a cancellation", dm.Files)
+	}
+	if !strings.Contains(ics, "STATUS:CANCELLED") {
+		t.Errorf("the attached evening should be cancelled:\n%s", ics)
+	}
+}
+
+// Without a chat server there is nobody to confirm to. The registration is
+// saved all the same, and the page says as much rather than claiming a message
+// went out.
+func TestWithoutMattermostRegisteringStillWorks(t *testing.T) {
+	h := newHarness(t)
+	c := h.client(t)
+	c.member("Anna Andersson", "anna.andersson")
+	if rec := c.post("/middag/"+openDay, party(2, 0, store.DietOmnivore, "")); rec.Code != http.StatusSeeOther {
+		t.Fatalf("register = %d", rec.Code)
+	}
+	if _, err := h.store.MemberRegistration(context.Background(), openDay, "anna.andersson"); err != nil {
+		t.Fatalf("the registration should be stored anyway: %v", err)
+	}
+	if body := c.get("/middag/" + openDay + "?sparat=1").Body.String(); strings.Contains(body, "direktmeddelande") {
+		t.Error("the page should not promise a message it cannot send")
+	}
+}
+
+// A household that is coming is offered the evening for its own calendar, and
+// the file is a calendar a calendar can read.
+func TestTheEveningCanBeAddedToTheCalendar(t *testing.T) {
+	h := newHarness(t)
+	c := h.client(t)
+	c.member("Anna Andersson", "anna.andersson")
+	c.post("/middag/"+openDay, party(2, 0, store.DietOmnivore, ""))
+
+	body := c.get("/middag/" + openDay).Body.String()
+	for _, want := range []string{
+		"/middag/" + openDay + "/kalender.ics",
+		"calendar.google.com",
+		"outlook.office.com",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page should offer %q", want)
+		}
+	}
+
+	rec := c.get("/middag/" + openDay + "/kalender.ics")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the calendar file = %d", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/calendar") {
+		t.Errorf("Content-Type = %q", got)
+	}
+	if got := rec.Header().Get("Content-Disposition"); !strings.Contains(got, "middag-"+openDay+".ics") {
+		t.Errorf("Content-Disposition = %q", got)
+	}
+	ics := rec.Body.String()
+	for _, want := range []string{
+		"BEGIN:VCALENDAR", "BEGIN:VEVENT", "END:VCALENDAR",
+		// 18:00 in Stockholm on a summer evening is 16:00 UTC.
+		"DTSTART:20260825T160000Z",
+		"DTEND:20260825T173000Z",
+		"STATUS:CONFIRMED",
+		"X-WR-TIMEZONE:Europe/Stockholm",
+	} {
+		if !strings.Contains(ics, want) {
+			t.Errorf("the calendar file is missing %q:\n%s", want, ics)
+		}
+	}
+}
+
+// A guest leaves no address of any kind. The page is the confirmation, and it
+// hands the evening to their calendar the same way.
+func TestAGuestNeedsNoAddressAndGetsAConfirmation(t *testing.T) {
+	h := newHarness(t)
+	c := h.client(t)
+
+	// There is nowhere to type an address, because nothing is ever sent.
+	if body := c.get("/gast").Body.String(); strings.Contains(body, `type="email"`) {
+		t.Error("the guest form still asks for an e-mail address")
+	}
+
+	form := party(2, 0, store.DietPescetarian, "skaldjursallergi")
+	form.Set("date", openDay)
+	form.Set("name", "Kalle Svensson")
+	form.Set("host", "Anna Andersson")
+	rec := c.post("/gast", form)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("guest registration = %d — %s", rec.Code, rec.Body.String())
+	}
+	link := rec.Header().Get("Location")
+
+	body := c.get(link).Body.String()
+	for _, want := range []string{
+		"Kalle Svensson", // the receipt says what was registered
+		"Pescetarian",
+		"kalender.ics", // and offers it to their calendar
+		"calendar.google.com",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the guest's confirmation is missing %q", want)
+		}
+	}
+
+	token := strings.TrimPrefix(strings.Split(link, "?")[0], "/gast/")
+	ics := c.get("/gast/" + token + "/kalender.ics")
+	if ics.Code != http.StatusOK {
+		t.Fatalf("the guest's calendar file = %d", ics.Code)
+	}
+	// It points back at the guest's own link, not at a page they cannot open,
+	// and says nothing about the house.
+	if !strings.Contains(ics.Body.String(), "/gast/"+token) {
+		t.Errorf("the file should link back to the guest's own page:\n%s", ics.Body.String())
+	}
+	if strings.Contains(ics.Body.String(), "Matlag") {
+		t.Errorf("a guest is not told who cooks:\n%s", ics.Body.String())
+	}
+
+	// A token nobody has is nothing at all.
+	if rec := c.get("/gast/hittepa/kalender.ics"); rec.Code != http.StatusNotFound {
+		t.Errorf("an unknown token = %d, want 404", rec.Code)
+	}
+}
+
+// ------------------------------------------------------- saying who you are --
+
+// The field takes what somebody is likely to have: their username, a pasted
+// mention, or their name. Two people with the same name is a choice the site
+// must not make for them.
+func TestAHouseholdSaysWhoItIsByAccount(t *testing.T) {
+	for _, tc := range []struct {
+		name, typed, want string
+		status            int
+	}{
+		{"a username", "cecilia.dahl", "cecilia.dahl", http.StatusSeeOther},
+		{"a pasted mention", "@cecilia.dahl", "cecilia.dahl", http.StatusSeeOther},
+		{"a full name", "Cecilia Dahl", "cecilia.dahl", http.StatusSeeOther},
+		{"a folded name", "cecilia dahl", "cecilia.dahl", http.StatusSeeOther},
+		{"nobody at all", "", "", http.StatusUnprocessableEntity},
+		{"a stranger", "hittepa.person", "", http.StatusUnprocessableEntity},
+		{"two people at once", "Anna Andersson", "", http.StatusUnprocessableEntity},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newChatHarness(t)
+			c := h.client(t)
+			c.login("hus")
+			rec := c.post("/jagar", url.Values{"member": {tc.typed}, "next": {"/"}})
+			if rec.Code != tc.status {
+				t.Fatalf("= %d, want %d — %s", rec.Code, tc.status, rec.Body.String())
+			}
+			if tc.status != http.StatusSeeOther {
+				// The reason is on the page, not in a log somewhere.
+				if body := rec.Body.String(); !strings.Contains(body, "Vem är du?") {
+					t.Errorf("the form should come back with the problem:\n%s", body)
+				}
+				return
+			}
+			// Registering now stores that account, and the name comes from it.
+			c.post("/middag/"+openDay, party(1, 0, store.DietOmnivore, ""))
+			got, err := h.store.MemberRegistration(context.Background(), openDay, tc.want)
+			if err != nil {
+				t.Fatalf("stored registration: %v", err)
+			}
+			if got.Name != "Cecilia Dahl" {
+				t.Errorf("Name = %q, want the name from the account", got.Name)
+			}
+			if got.MMUserID == "" {
+				t.Error("the account id is what the confirmation is sent to; it must be stored")
+			}
+		})
+	}
+}
+
+// Two people share a name, so the page says which two rather than guessing.
+func TestAnAmbiguousNameNamesTheCandidates(t *testing.T) {
+	h := newChatHarness(t)
+	c := h.client(t)
+	c.login("hus")
+	rec := c.post("/jagar", url.Values{"member": {"Anna Andersson"}, "next": {"/"}})
+	body := rec.Body.String()
+	for _, want := range []string{"anna.andersson", "anna.a"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page should name @%s as one of the candidates:\n%s", want, body)
+		}
+	}
+}
+
+// A name written on the form wins over the one on the account: somebody may go
+// by something else in the house than in the chat.
+func TestATypedNameWinsOverTheAccountsName(t *testing.T) {
+	h := newChatHarness(t)
+	c := h.client(t)
+	c.login("hus")
+	c.identify("Cissi och Dan", "cecilia.dahl")
+	c.post("/middag/"+openDay, party(2, 0, store.DietOmnivore, ""))
+	got, err := h.store.MemberRegistration(context.Background(), openDay, "cecilia.dahl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "Cissi och Dan" {
+		t.Errorf("Name = %q, want what the household wrote", got.Name)
+	}
+}
+
+// The confirmation follows the language the household has set in Mattermost,
+// not the one the site happens to be showing: the message turns up in the
+// chat, on the chat's terms.
+func TestTheConfirmationFollowsTheChatsLanguage(t *testing.T) {
+	h := newChatHarness(t)
+	bo := h.client(t)
+	bo.member("Bo Bengtsson", "bo.bengtsson")
+	bo.post("/middag/"+openDay, party(1, 0, store.DietVegan, ""))
+
+	dm := h.chat.waitForDMTo(t, "bo.bengtsson", 1)
+	if !strings.Contains(dm.Message, "Hi Bo!") {
+		t.Errorf("Bo reads English in the chat:\n%s", dm.Message)
+	}
+
+	// Anna has set nothing, so she gets the house's own language.
+	anna := h.client(t)
+	anna.member("Anna Andersson", "anna.andersson")
+	anna.post("/middag/"+openDay, party(1, 0, store.DietOmnivore, ""))
+	if got := h.chat.waitForDMTo(t, "anna.andersson", 1); !strings.Contains(got.Message, "Hej Anna!") {
+		t.Errorf("Anna should get the house's language:\n%s", got.Message)
 	}
 }

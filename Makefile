@@ -1,7 +1,7 @@
 # Everyday commands. Run `make` on its own to see them.
 
 .DEFAULT_GOAL := help
-.PHONY: help demo demo-docker demo-stop run test race vet fmt check build image clean
+.PHONY: help demo demo-docker demo-stop run test test-js race vet fmt check build image clean
 
 BINARY  := dinners
 IMAGE   := dinners-rudbeckia
@@ -28,6 +28,15 @@ run: ## Run against your own config.yaml (set DINNER_PASSWORD first)
 test: ## Run the tests
 	go test ./...
 
+# The files are listed by the shell rather than handed to Node as a directory:
+# Node 22 stopped searching directories given to --test and tries to run them.
+test-js: ## Run the browser-side tests (needs Node; skipped if missing)
+	@if command -v node >/dev/null 2>&1; then \
+		node --test internal/web/static/*_test.mjs; \
+	else \
+		echo "node is not installed — skipping the browser-side tests"; \
+	fi
+
 race: ## Run the tests with the race detector
 	go test -race -count=1 ./...
 
@@ -37,7 +46,7 @@ vet: ## Static checks
 fmt: ## Format every Go file
 	gofmt -w .
 
-check: fmt vet race ## Format, vet and test — run this before pushing
+check: fmt vet race test-js ## Format, vet and test — run this before pushing
 	@go run ./cmd/server -check-config
 
 build: ## Build the binary into ./dinners

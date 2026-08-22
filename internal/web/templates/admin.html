@@ -126,9 +126,6 @@
 		<span class="muted small">{{t "admin.teams.count" (len .Data.Teams)}}</span>
 	</div>
 	<p class="muted">{{t "admin.teams.body"}} {{t "admin.teams.leader.hint"}}</p>
-	{{/* One list of accounts for every leader field on the page; app.js fills
-	     it in from Mattermost, and typing a username works without it. */}}
-	{{if .Data.ChatOn}}<datalist id="mattermost-users" data-member-list="/admin/mattermost"></datalist>{{end}}
 
 	<h3 class="section-title">{{t "admin.teams.order"}}</h3>
 	<p class="muted small">{{t "admin.teams.order.body"}}</p>
@@ -174,7 +171,19 @@
 			<input type="hidden" name="back" value="/admin#lag">
 			<div class="field"><label>{{t "admin.teams.team"}}<input name="name" type="text" value="{{.Name}}" required></label></div>
 			<div class="field">
-				<label>{{t "admin.teams.leader"}}<input name="leader_username" type="text" value="{{.LeaderUsername}}" placeholder="anna.andersson" list="mattermost-users" autocapitalize="none" autocomplete="off" spellcheck="false"></label>
+				<label for="leader-{{.ID}}">{{t "admin.teams.leader"}} <small>Mattermost</small></label>
+				{{/* The same picker the household uses to say who it is: search
+				     by name or by username, and a typed username still works
+				     without JavaScript. */}}
+				<div class="member-field">
+					<span class="member-at" aria-hidden="true">@</span>
+					<input id="leader-{{.ID}}" name="leader_username" type="text"
+					       value="{{.LeaderUsername}}" placeholder="Anna Andersson"
+					       aria-controls="leader-{{.ID}}-list" autocapitalize="none"
+					       autocomplete="off" spellcheck="false" data-member-search>
+					<ul class="combo-list" id="leader-{{.ID}}-list" role="listbox"
+					    aria-label="{{t "ident.member.list"}}" hidden></ul>
+				</div>
 				{{if .LeaderName}}<small class="muted">{{.LeaderName}}</small>{{end}}
 			</div>
 			<label class="checkbox"><input type="checkbox" name="active" value="1" {{if .Active}}checked{{end}}><span>{{t "admin.teams.inrotation"}}</span></label>
@@ -194,7 +203,18 @@
 	<form method="post" action="/admin/lag" class="team-row">
 		<input type="hidden" name="back" value="/admin#lag">
 		<div class="field"><label>{{t "admin.teams.team"}}<input name="name" type="text" required placeholder="Lag 1"></label></div>
-		<div class="field"><label>{{t "admin.teams.leader"}}<input name="leader_username" type="text" placeholder="anna.andersson" list="mattermost-users" autocapitalize="none" autocomplete="off" spellcheck="false"></label></div>
+		<div class="field">
+			<label for="leader-new">{{t "admin.teams.leader"}} <small>Mattermost</small></label>
+			<div class="member-field">
+				<span class="member-at" aria-hidden="true">@</span>
+				<input id="leader-new" name="leader_username" type="text"
+				       placeholder="Anna Andersson" aria-controls="leader-new-list"
+				       autocapitalize="none" autocomplete="off" spellcheck="false"
+				       data-member-search>
+				<ul class="combo-list" id="leader-new-list" role="listbox"
+				    aria-label="{{t "ident.member.list"}}" hidden></ul>
+			</div>
+		</div>
 		<label class="checkbox"><input type="checkbox" name="active" value="1" checked><span>{{t "admin.teams.inrotation"}}</span></label>
 		<div class="team-actions"><button type="submit" class="button small primary">{{t "add"}}</button></div>
 	</form>
@@ -368,7 +388,7 @@
 				<th>{{t "admin.standing.evening"}}</th>
 				<th class="num">{{t "form.adults"}}</th><th class="num">{{t "form.children"}}</th>
 				<th>{{t "list.col.diet"}}</th><th>{{t "list.col.note"}}</th>
-				<th>{{t "admin.standing.email"}}</th></tr>
+				<th>{{t "admin.standing.member"}}</th></tr>
 			</thead>
 			<tbody>
 				{{range .Data.Standing}}
@@ -378,7 +398,7 @@
 					<td class="num">{{.Adults}}</td><td class="num">{{.Children}}</td>
 					<td>{{dietLabel .Diet}}</td>
 					<td>{{.Note}}</td>
-					<td class="muted small">{{.Email}}</td>
+					<td class="muted small">{{with .Member}}@{{.}}{{end}}</td>
 				</tr>
 				{{end}}
 			</tbody>

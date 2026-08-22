@@ -14,13 +14,17 @@ import (
 // The public guest page is the only thing outside the password gate. A visitor
 // is given the address and registers themselves; they never see the house's
 // list, only their own answer.
+//
+// A guest leaves no address of any kind. Nothing is sent to them: the page
+// itself confirms the registration, offers the evening to their calendar, and
+// gives them a link back to change or withdraw it. That link is the whole
+// relationship, and it is the guest who keeps it.
 
 // guestForm is what a visitor fills in.
 type guestForm struct {
 	Date     string
 	Name     string
 	Host     string
-	Email    string
 	Adults   int
 	Children int
 	Diet     store.Diet
@@ -95,7 +99,6 @@ func (s *Server) handleGuestSave(w http.ResponseWriter, r *http.Request) {
 		Date:   strings.TrimSpace(r.FormValue("date")),
 		Name:   strings.TrimSpace(r.FormValue("name")),
 		Host:   strings.TrimSpace(r.FormValue("host")),
-		Email:  auth.NormalizeEmail(r.FormValue("email")),
 		Adults: counts.Adults, Children: counts.Children,
 		Diet: counts.Diet, Note: counts.Note,
 	}
@@ -121,9 +124,6 @@ func (s *Server) handleGuestSave(w http.ResponseWriter, r *http.Request) {
 	case form.Name == "":
 		reject(i18n.T(v.Lang, "guest.needname"), http.StatusUnprocessableEntity)
 		return
-	case form.Email != "" && !auth.ValidEmail(form.Email):
-		reject(i18n.T(v.Lang, "guest.bademail"), http.StatusUnprocessableEntity)
-		return
 	case counts.Adults+counts.Children <= 0:
 		reject(i18n.T(v.Lang, "guest.atleastone"), http.StatusUnprocessableEntity)
 		return
@@ -139,7 +139,6 @@ func (s *Server) handleGuestSave(w http.ResponseWriter, r *http.Request) {
 		ID:     auth.ID(),
 		Date:   d.Key,
 		Kind:   store.KindGuest,
-		Email:  form.Email,
 		Name:   form.Name,
 		Host:   form.Host,
 		Adults: form.Adults, Children: form.Children,
@@ -191,8 +190,14 @@ func (s *Server) handleGuestEdit(w http.ResponseWriter, r *http.Request) {
 		"Token":  reg.Token,
 		"Open":   d.Open(v.Now),
 		"Saved":  r.URL.Query().Get("sparat") != "",
+		// A guest hears nothing from us afterwards, so this page is the
+		// confirmation: what they registered, and the evening for their own
+		// calendar.
+		"Calendar": s.calendarLinks(s.guestEvent(d, reg.Token, v.Lang),
+			"/gast/"+reg.Token+"/kalender.ics"),
+		"Coming": reg.Attending(),
 		"Form": guestForm{
-			Date: reg.Date, Name: reg.Name, Host: reg.Host, Email: reg.Email,
+			Date: reg.Date, Name: reg.Name, Host: reg.Host,
 			Adults: reg.Adults, Children: reg.Children,
 			Diet: reg.Diet, Note: reg.Note,
 		},
@@ -248,22 +253,21 @@ func (s *Server) handleGuestUpdate(w http.ResponseWriter, r *http.Request) {
 		Date:   reg.Date,
 		Name:   strings.TrimSpace(r.FormValue("name")),
 		Host:   strings.TrimSpace(r.FormValue("host")),
-		Email:  auth.NormalizeEmail(r.FormValue("email")),
 		Adults: counts.Adults, Children: counts.Children,
 		Diet: counts.Diet, Note: counts.Note,
 	}
 	reject := func(problem string) {
 		v.Title = i18n.T(v.Lang, "guest.yours")
 		v.Data = map[string]any{"Dinner": d, "Token": reg.Token, "Open": true,
-			"Form": form, "Error": problem}
+			"Form": form, "Error": problem,
+			"Calendar": s.calendarLinks(s.guestEvent(d, reg.Token, v.Lang),
+				"/gast/"+reg.Token+"/kalender.ics"),
+			"Coming": reg.Attending()}
 		s.render(w, r, http.StatusUnprocessableEntity, "guest.html", v)
 	}
 	switch {
 	case form.Name == "":
 		reject(i18n.T(v.Lang, "guest.needname"))
-		return
-	case form.Email != "" && !auth.ValidEmail(form.Email):
-		reject(i18n.T(v.Lang, "guest.bademail"))
 		return
 	case counts.Adults+counts.Children <= 0:
 		reject(i18n.T(v.Lang, "guest.atleastone.or"))
@@ -274,7 +278,7 @@ func (s *Server) handleGuestUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reg.Name, reg.Host, reg.Email = form.Name, form.Host, form.Email
+	reg.Name, reg.Host = form.Name, form.Host
 	reg.Adults, reg.Children = form.Adults, form.Children
 	reg.Diet = form.Diet
 	reg.Note, reg.UpdatedAt = form.Note, s.now()

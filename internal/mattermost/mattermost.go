@@ -1,7 +1,8 @@
 // Package mattermost talks to the house's Mattermost server as the dinner bot.
-// It does two things: look up accounts in the user directory, so a cooking
-// team's leader can be named by their username, and send that leader a direct
-// message when registration closes.
+// It does two things: look up accounts in the user directory, so that both a
+// household and a cooking team's leader can be named by their username, and
+// send them a direct message — the confirmation of a registration, and the
+// list when registration closes.
 //
 // When no server or token is configured the client is disabled: lookups
 // answer with the name as typed and messages are written to the log instead of
@@ -16,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
@@ -47,8 +49,12 @@ type User struct {
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`
 	Email     string `json:"email"`
-	IsBot     bool   `json:"is_bot"`
-	DeleteAt  int64  `json:"delete_at"`
+	// Locale is the language the person has set in Mattermost ("sv", "en").
+	// A message from the bot goes out in it, since that is the one setting
+	// they have made about being written to.
+	Locale   string `json:"locale"`
+	IsBot    bool   `json:"is_bot"`
+	DeleteAt int64  `json:"delete_at"`
 }
 
 // Active reports whether the account is a real, non-deactivated person.
@@ -66,6 +72,12 @@ func (u User) DisplayName() string {
 	default:
 		return u.Username
 	}
+}
+
+// File is an attachment carried by a direct message, e.g. a calendar file.
+type File struct {
+	Filename string
+	Data     []byte
 }
 
 // Client is the bot's connection to Mattermost.
@@ -113,8 +125,9 @@ func (c *Client) Verify(ctx context.Context) (User, error) {
 	return u, nil
 }
 
-// Search finds people in the directory, for the admin view's leader lookup. A
-// disabled client finds nobody, which leaves the plain text field working.
+// Search finds people in the directory, for the pages that let somebody be
+// picked by name. A disabled client finds nobody, which leaves the plain text
+// field working.
 func (c *Client) Search(ctx context.Context, term string) ([]User, error) {
 	term = strings.TrimSpace(term)
 	if !c.Enabled() || term == "" {
@@ -138,10 +151,10 @@ func (c *Client) Search(ctx context.Context, term string) ([]User, error) {
 	return out, nil
 }
 
-// Directory lists the people who could lead a cooking team, so the admin form
-// can offer them all without a round trip per keystroke. The bool reports that
-// the listing was cut short at DirectoryLimit, which means the caller is
-// looking at part of a much larger server.
+// Directory lists the people in the house, so a form can hold the whole list
+// and search it without a round trip per keystroke. The bool reports that the
+// listing was cut short at DirectoryLimit, which means the caller is looking
+// at part of a much larger server and should let the server search instead.
 func (c *Client) Directory(ctx context.Context) ([]User, bool, error) {
 	if !c.Enabled() {
 		return nil, false, nil
@@ -168,7 +181,8 @@ func (c *Client) Directory(ctx context.Context) ([]User, bool, error) {
 }
 
 // ByUsername looks up one account. A disabled client answers with the name as
-// typed and no id, so a team can still name its leader without a chat server.
+// typed and no id, so a household can still say who it is, and a team can
+// still name its leader, without a chat server.
 func (c *Client) ByUsername(ctx context.Context, username string) (User, error) {
 	username = normalizeUsername(username)
 	if username == "" {
@@ -188,9 +202,9 @@ func (c *Client) ByUsername(ctx context.Context, username string) (User, error) 
 	return u, nil
 }
 
-// DM sends a direct message from the bot to one user. A disabled client logs
-// the message instead, so nothing is lost silently.
-func (c *Client) DM(ctx context.Context, userID, message string) error {
+// DM sends a direct message from the bot to one user, with optional files.
+// A disabled client logs the message instead, so nothing is lost silently.
+func (c *Client) DM(ctx context.Context, userID, message string, files ...File) error {
 	if !c.Enabled() {
 		c.log.Warn("mattermost not configured, direct message not sent", "user", userID)
 		c.log.Debug("mattermost message body", "user", userID, "message", message)
@@ -214,8 +228,68 @@ func (c *Client) DM(ctx context.Context, userID, message string) error {
 		[]string{c.self.ID, userID}, &channel); err != nil {
 		return fmt.Errorf("open direct channel: %w", err)
 	}
-	return c.call(ctx, http.MethodPost, "/api/v4/posts",
-		map[string]any{"channel_id": channel.ID, "message": message}, nil)
+	post := map[string]any{"channel_id": channel.ID, "message": message}
+	if len(files) > 0 {
+		ids, err := c.upload(ctx, channel.ID, files)
+		if err != nil {
+			// The message matters more than the attachment: send it anyway.
+			c.log.Error("upload attachment", "user", userID, "err", err)
+		} else if len(ids) > 0 {
+			post["file_ids"] = ids
+		}
+	}
+	return c.call(ctx, http.MethodPost, "/api/v4/posts", post, nil)
+}
+
+// upload puts files in a channel and returns their ids for the post.
+func (c *Client) upload(ctx context.Context, channelID string, files []File) ([]string, error) {
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	if err := mw.WriteField("channel_id", channelID); err != nil {
+		return nil, err
+	}
+	for _, f := range files {
+		part, err := mw.CreateFormFile("files", f.Filename)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := part.Write(f.Data); err != nil {
+			return nil, err
+		}
+	}
+	if err := mw.Close(); err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v4/files", &buf)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, apiError(resp)
+	}
+	var out struct {
+		FileInfos []struct {
+			ID string `json:"id"`
+		} `json:"file_infos"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(out.FileInfos))
+	for _, fi := range out.FileInfos {
+		ids = append(ids, fi.ID)
+	}
+	return ids, nil
 }
 
 // call performs one API request, encoding body and decoding into out when
@@ -282,12 +356,13 @@ var folder = strings.NewReplacer(
 )
 
 // Fold turns a name into the form searches compare: lowercase, without
-// accents, so "Östberg" and "ostberg" find each other.
+// accents, so "Östberg" and "ostberg" find each other. The browser folds the
+// same way, so both ends agree on what matches.
 func Fold(s string) string {
 	return folder.Replace(strings.ToLower(strings.TrimSpace(s)))
 }
 
-// normalizeUsername accepts what an administrator is likely to type: "@anna",
+// normalizeUsername accepts what a person is likely to type: "@anna",
 // "Anna" or a pasted profile link all become "anna".
 func normalizeUsername(s string) string {
 	s = strings.TrimSpace(s)

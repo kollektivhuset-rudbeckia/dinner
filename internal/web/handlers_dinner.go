@@ -116,7 +116,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request, v *view) {
 		rows = append(rows, row{
 			Dinner:  d,
 			Summary: sum,
-			Mine:    findMine(sum, v.Ident.Email),
+			Mine:    findMine(sum, v.Ident.MMUsername),
 			Open:    d.Open(v.Now),
 		})
 	}
@@ -133,17 +133,18 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request, v *view) {
 
 // findMine picks this household's own line out of a summary, whether they are
 // coming or have said no.
-func findMine(sum dinner.Summary, email string) *dinner.Attendee {
-	if email == "" {
+func findMine(sum dinner.Summary, member string) *dinner.Attendee {
+	member = store.Member(member)
+	if member == "" {
 		return nil
 	}
 	for i, a := range sum.Attendees {
-		if a.Email == email && !a.Guest {
+		if a.Member == member && !a.Guest {
 			return &sum.Attendees[i]
 		}
 	}
 	for i, a := range sum.Declined {
-		if a.Email == email && !a.Guest {
+		if a.Member == member && !a.Guest {
 			return &sum.Declined[i]
 		}
 	}
@@ -208,7 +209,7 @@ type regForm struct {
 // is one, otherwise with the household's standing registration for the
 // weekday, otherwise with a plausible first guess.
 func (s *Server) formFor(ctx context.Context, d dinner.Dinner, id auth.Identity) regForm {
-	if reg, err := s.store.MemberRegistration(ctx, d.Key, id.Email); err == nil {
+	if reg, err := s.store.MemberRegistration(ctx, d.Key, id.MMUsername); err == nil {
 		return regForm{
 			Adults: reg.Adults, Children: reg.Children, Diet: reg.Diet,
 			Note: reg.Note, Answered: true,
@@ -216,7 +217,7 @@ func (s *Server) formFor(ctx context.Context, d dinner.Dinner, id auth.Identity)
 	} else if !errors.Is(err, store.ErrNotFound) {
 		s.log.Error("read registration", "date", d.Key, "err", err)
 	}
-	if list, err := s.store.StandingByEmail(ctx, id.Email); err == nil {
+	if list, err := s.store.StandingByMember(ctx, id.MMUsername); err == nil {
 		for _, st := range list {
 			if st.Weekday == d.Weekday() {
 				return regForm{
@@ -232,18 +233,24 @@ func (s *Server) formFor(ctx context.Context, d dinner.Dinner, id auth.Identity)
 func (s *Server) renderDinner(w http.ResponseWriter, r *http.Request, v *view,
 	world *world, d dinner.Dinner, sum dinner.Summary, form regForm, problem string, status int) {
 
+	mine := findMine(sum, v.Ident.MMUsername)
 	v.Title = i18n.TitleCase(i18n.DateLong(v.Lang, d.Date))
 	v.Data = map[string]any{
 		"Dinner":  d,
 		"Summary": sum,
 		"Form":    form,
 		"Error":   problem,
-		"Mine":    findMine(sum, v.Ident.Email),
+		"Mine":    mine,
 		"Open":    d.Open(v.Now),
 		"Closed":  d.Closed(v.Now),
 		"Over":    d.Over(v.Now),
 		"Saved":   r.URL.Query().Get("sparat") != "",
 		"ListURL": "/middag/" + d.Key + "/lista",
+		// The evening is offered to the household's own calendar whenever it
+		// is coming, which is the other half of getting a confirmation instead
+		// of an e-mail.
+		"Calendar": s.calendarLinks(s.event(d, v.Lang), "/middag/"+d.Key+"/kalender.ics"),
+		"Coming":   mine != nil && mine.People() > 0,
 	}
 	s.render(w, r, status, "dinner.html", v)
 }
@@ -299,11 +306,12 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request, v *view)
 	}
 
 	now := s.now()
-	err = s.store.SaveRegistration(ctx, store.Registration{
+	reg := store.Registration{
 		ID:        auth.ID(),
 		Date:      d.Key,
 		Kind:      store.KindMember,
-		Email:     v.Ident.Email,
+		Member:    v.Ident.MMUsername,
+		MMUserID:  v.Ident.MMUserID,
 		Name:      v.Ident.Name,
 		Apartment: v.Ident.Apartment,
 		Adults:    form.Adults,
@@ -313,13 +321,18 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request, v *view)
 		Token:     auth.Token(),
 		CreatedAt: now, UpdatedAt: now,
 		CreatedIP: s.clientIP(r),
-	})
-	if err != nil {
+	}
+	if err := s.store.SaveRegistration(ctx, reg); err != nil {
 		s.fail(w, r, "save registration", err)
 		return
 	}
-	s.log.Info("registration saved", "date", d.Key,
+	s.log.Info("registration saved", "date", d.Key, "member", reg.Member,
 		"people", form.Adults+form.Children, "declined", declined)
+	// The confirmation goes out in the chat the household already reads, with
+	// the evening attached for their calendar. It is sent in the background:
+	// the answer is saved either way, and nobody should wait on the chat
+	// server to see their own page.
+	go s.notifyRegistered(reg, d)
 	http.Redirect(w, r, "/middag/"+d.Key+"?sparat=1", http.StatusSeeOther)
 }
 

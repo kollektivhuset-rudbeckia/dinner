@@ -111,28 +111,167 @@
 	}
 
 	// --- Who is in the house ------------------------------------------------
-	// The team leader is named by their Mattermost username, and remembering
-	// usernames is not something anybody should have to do. The list of
-	// accounts is fetched once and offered as suggestions; without this the
-	// field is still a plain text box that takes a username or a name.
-	var members = document.querySelector('[data-member-list]');
-	if (members && window.fetch) {
-		fetch(members.getAttribute('data-member-list'), { credentials: 'same-origin' })
-			.then(function (response) { return response.ok ? response.json() : null; })
-			.then(function (data) {
-				if (!data || !data.users) { return; }
-				data.users.forEach(function (user) {
-					var option = document.createElement('option');
-					option.value = user.username;
-					// Browsers show the label beside the value, so the
-					// administrator picks a person rather than a string.
-					option.label = user.name;
-					option.textContent = user.name;
-					members.appendChild(option);
+	// A household says who it is by its Mattermost account, and a cooking team
+	// names its leader the same way. Remembering usernames is not something
+	// anybody should have to do, so the field is a plain text input that this
+	// turns into a combobox: the whole house is fetched once, indexed by
+	// members.js, and searched as you type — by full name or by username,
+	// whichever you happen to know. Without JavaScript, or without a chat
+	// server, typing the username by hand does exactly the same thing.
+	document.querySelectorAll('input[data-member-search]').forEach(function (field) {
+		var list = document.getElementById(field.getAttribute('aria-controls'));
+		if (!list || !window.fetch || !window.RBMembers) { return; }
+
+		var nameSelector = field.getAttribute('data-member-name');
+		var nameField = nameSelector ? document.querySelector(nameSelector) : null;
+		var index = null;      // the searchable directory, once fetched
+		var remote = false;    // too many people to hold: let the server search
+		var loading = null;    // the fetch in flight, so it happens once
+		var shown = [];        // what the list currently offers
+		var active = -1;       // which option the keyboard is on
+		var wait = null;
+		var inflight = null;
+
+		var close = function () {
+			list.hidden = true;
+			list.innerHTML = '';
+			field.setAttribute('aria-expanded', 'false');
+			field.removeAttribute('aria-activedescendant');
+			shown = [];
+			active = -1;
+		};
+
+		var highlight = function (next) {
+			var options = list.children;
+			if (!options.length) { return; }
+			if (active >= 0 && options[active]) {
+				options[active].removeAttribute('aria-selected');
+			}
+			active = (next + options.length) % options.length;
+			options[active].setAttribute('aria-selected', 'true');
+			field.setAttribute('aria-activedescendant', options[active].id);
+			if (options[active].scrollIntoView) {
+				options[active].scrollIntoView({ block: 'nearest' });
+			}
+		};
+
+		var choose = function (user) {
+			if (!user) { return; }
+			// The form submits the username, so that is what the field holds.
+			field.value = user.username;
+			if (nameField && !nameField.value.trim()) {
+				nameField.value = user.name || '';
+			}
+			close();
+		};
+
+		var render = function (users) {
+			shown = users;
+			list.innerHTML = '';
+			if (!users.length) {
+				close();
+				return;
+			}
+			users.forEach(function (user, i) {
+				var option = document.createElement('li');
+				option.id = list.id + '-' + i;
+				option.className = 'combo-option';
+				option.setAttribute('role', 'option');
+				var name = document.createElement('strong');
+				name.textContent = user.name || user.username;
+				var handle = document.createElement('span');
+				handle.textContent = '@' + user.username;
+				option.appendChild(name);
+				option.appendChild(handle);
+				// mousedown, not click: the field blurs before a click lands.
+				option.addEventListener('mousedown', function (event) {
+					event.preventDefault();
+					choose(user);
 				});
-			})
-			.catch(function () { /* the field works without suggestions */ });
-	}
+				list.appendChild(option);
+			});
+			list.hidden = false;
+			field.setAttribute('aria-expanded', 'true');
+			active = -1;
+		};
+
+		// ask lets the server search, for a house too large to send at once.
+		var ask = function (term) {
+			if (inflight) { inflight.abort(); }
+			inflight = window.AbortController ? new AbortController() : null;
+			fetch('/medlemmar?q=' + encodeURIComponent(term),
+				{ signal: inflight ? inflight.signal : undefined,
+				  credentials: 'same-origin',
+				  headers: { 'Accept': 'application/json' } })
+				.then(function (response) {
+					if (!response.ok) { throw new Error('status ' + response.status); }
+					return response.json();
+				})
+				.then(function (data) { render(data.users || []); })
+				.catch(function () { /* the field still works as plain text */ });
+		};
+
+		// load fetches the directory once, and remembers if it was too big.
+		var load = function () {
+			if (loading) { return loading; }
+			loading = fetch('/medlemmar',
+				{ credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+				.then(function (response) {
+					if (!response.ok) { throw new Error('status ' + response.status); }
+					return response.json();
+				})
+				.then(function (data) {
+					remote = !!data.truncated;
+					index = window.RBMembers.buildIndex(data.users || []);
+				})
+				.catch(function () { index = null; });
+			return loading;
+		};
+
+		var update = function () {
+			var term = field.value.trim();
+			if (term.length < 1) { close(); return; }
+			if (remote) {
+				if (term.length >= 2) { ask(term); }
+				return;
+			}
+			load().then(function () {
+				if (!index || field.value.trim() !== term) { return; }
+				render(window.RBMembers.search(index, term));
+			});
+		};
+
+		field.setAttribute('role', 'combobox');
+		field.setAttribute('aria-expanded', 'false');
+		field.setAttribute('aria-autocomplete', 'list');
+		field.addEventListener('focus', load);
+		field.addEventListener('input', function () {
+			clearTimeout(wait);
+			// The list is local, so there is nothing to wait for. The debounce
+			// is only there for the server-side fallback.
+			wait = setTimeout(update, remote ? 250 : 0);
+		});
+
+		field.addEventListener('keydown', function (event) {
+			if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+				if (list.hidden) { update(); return; }
+				event.preventDefault();
+				highlight(active + (event.key === 'ArrowDown' ? 1 : -1));
+				return;
+			}
+			if (event.key === 'Enter' && !list.hidden && active >= 0) {
+				event.preventDefault();
+				choose(shown[active]);
+				return;
+			}
+			if (event.key === 'Escape' && !list.hidden) {
+				event.preventDefault();
+				close();
+			}
+		});
+
+		field.addEventListener('blur', close);
+	});
 
 	// --- Print button on the list -------------------------------------------
 	var print = document.querySelector('[data-print]');

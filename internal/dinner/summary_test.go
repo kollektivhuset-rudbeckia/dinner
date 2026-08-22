@@ -7,10 +7,10 @@ import (
 	"github.com/O5ten/dinners/internal/store"
 )
 
-func member(email, name string, adults, children int, diet store.Diet, note string) store.Registration {
+func member(username, name string, adults, children int, diet store.Diet, note string) store.Registration {
 	return store.Registration{
-		ID: "r-" + email, Date: "2026-08-25", Kind: store.KindMember,
-		Email: email, Name: name, Adults: adults, Children: children,
+		ID: "r-" + username, Date: "2026-08-25", Kind: store.KindMember,
+		Member: username, Name: name, Adults: adults, Children: children,
 		Diet: diet, Note: note,
 	}
 }
@@ -23,9 +23,9 @@ func guest(name, host string, adults, children int, diet store.Diet, note string
 	}
 }
 
-func standing(email, name string, adults, children int, diet store.Diet) store.Standing {
+func standing(username, name string, adults, children int, diet store.Diet) store.Standing {
 	return store.Standing{
-		ID: "s-" + email, Email: email, Weekday: time.Tuesday, Name: name,
+		ID: "s-" + username, Member: username, Weekday: time.Tuesday, Name: name,
 		Adults: adults, Children: children, Diet: diet,
 	}
 }
@@ -33,12 +33,12 @@ func standing(email, name string, adults, children int, diet store.Diet) store.S
 func TestResolveAddsUpTheHeadcountAndDiets(t *testing.T) {
 	sum := Resolve(
 		[]store.Registration{
-			member("anna@x.se", "Anna", 2, 2, store.DietOmnivore, "glutenfritt för ett barn"),
-			member("bo@x.se", "Bo", 1, 0, store.DietVegan, ""),
-			member("dan@x.se", "Dan", 2, 0, store.DietFlexitarian, ""),
+			member("anna", "Anna", 2, 2, store.DietOmnivore, "glutenfritt för ett barn"),
+			member("bo", "Bo", 1, 0, store.DietVegan, ""),
+			member("dan", "Dan", 2, 0, store.DietFlexitarian, ""),
 			guest("Kalle", "Anna", 2, 0, store.DietPescetarian, "skaldjursallergi"),
 		},
-		[]store.Standing{standing("cecilia@x.se", "Cecilia", 2, 1, store.DietVegetarian)},
+		[]store.Standing{standing("cecilia", "Cecilia", 2, 1, store.DietVegetarian)},
 	)
 
 	if sum.People != 12 {
@@ -92,8 +92,8 @@ func TestResolveAddsUpTheHeadcountAndDiets(t *testing.T) {
 // A diet that is missing or from an older build still has to be fed.
 func TestAnUnknownDietIsCountedAsEatingEverything(t *testing.T) {
 	sum := Resolve([]store.Registration{
-		member("a@x.se", "A", 1, 0, "", ""),
-		member("b@x.se", "B", 2, 0, store.Diet("makrobiotisk"), ""),
+		member("a", "A", 1, 0, "", ""),
+		member("b", "B", 2, 0, store.Diet("makrobiotisk"), ""),
 	}, nil)
 
 	if got := sum.Count(store.DietOmnivore); got != 3 {
@@ -111,8 +111,8 @@ func TestAnUnknownDietIsCountedAsEatingEverything(t *testing.T) {
 // Households per diet is what the team counts when laying the table.
 func TestDietsCountHouseholdsAsWellAsPeople(t *testing.T) {
 	sum := Resolve([]store.Registration{
-		member("a@x.se", "A", 2, 0, store.DietVegan, ""),
-		member("b@x.se", "B", 1, 1, store.DietVegan, ""),
+		member("a", "A", 2, 0, store.DietVegan, ""),
+		member("b", "B", 1, 1, store.DietVegan, ""),
 	}, nil)
 	for _, c := range sum.Diets {
 		if c.Diet != store.DietVegan {
@@ -128,8 +128,8 @@ func TestDietsCountHouseholdsAsWellAsPeople(t *testing.T) {
 // standing one, in both directions.
 func TestRegistrationForTheEveningWinsOverTheStandingOne(t *testing.T) {
 	sum := Resolve(
-		[]store.Registration{member("anna@x.se", "Anna", 1, 0, store.DietOmnivore, "")},
-		[]store.Standing{standing("anna@x.se", "Anna", 2, 3, store.DietOmnivore)},
+		[]store.Registration{member("anna", "Anna", 1, 0, store.DietOmnivore, "")},
+		[]store.Standing{standing("anna", "Anna", 2, 3, store.DietOmnivore)},
 	)
 	if sum.People != 1 {
 		t.Fatalf("People = %d, want 1 — the evening's answer should win", sum.People)
@@ -141,10 +141,10 @@ func TestRegistrationForTheEveningWinsOverTheStandingOne(t *testing.T) {
 
 func TestRegisteringNobodyIsHowYouSkipOneEvening(t *testing.T) {
 	sum := Resolve(
-		[]store.Registration{member("anna@x.se", "Anna", 0, 0, store.DietOmnivore, "")},
+		[]store.Registration{member("anna", "Anna", 0, 0, store.DietOmnivore, "")},
 		[]store.Standing{
-			standing("anna@x.se", "Anna", 2, 2, store.DietOmnivore),
-			standing("bo@x.se", "Bo", 1, 0, store.DietOmnivore),
+			standing("anna", "Anna", 2, 2, store.DietOmnivore),
+			standing("bo", "Bo", 1, 0, store.DietOmnivore),
 		},
 	)
 	if sum.People != 1 {
@@ -165,8 +165,8 @@ func TestRegisteringNobodyIsHowYouSkipOneEvening(t *testing.T) {
 
 func TestStandingHouseholdsAreMarkedAsSuch(t *testing.T) {
 	sum := Resolve(
-		[]store.Registration{member("anna@x.se", "Anna", 1, 0, store.DietOmnivore, "")},
-		[]store.Standing{standing("bo@x.se", "Bo", 1, 0, store.DietOmnivore)},
+		[]store.Registration{member("anna", "Anna", 1, 0, store.DietOmnivore, "")},
+		[]store.Standing{standing("bo", "Bo", 1, 0, store.DietOmnivore)},
 	)
 	byName := map[string]Attendee{}
 	for _, a := range sum.Attendees {
@@ -190,8 +190,8 @@ func TestAttendeesAreSortedHouseFirstThenByName(t *testing.T) {
 	sum := Resolve(
 		[]store.Registration{
 			guest("Adam", "Cecilia", 1, 0, store.DietOmnivore, ""),
-			member("cecilia@x.se", "Cecilia", 1, 0, store.DietOmnivore, ""),
-			member("bo@x.se", "bo", 1, 0, store.DietOmnivore, ""),
+			member("cecilia", "Cecilia", 1, 0, store.DietOmnivore, ""),
+			member("bo", "bo", 1, 0, store.DietOmnivore, ""),
 		},
 		nil,
 	)

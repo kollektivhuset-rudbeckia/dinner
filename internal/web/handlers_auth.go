@@ -9,6 +9,7 @@ import (
 
 	"github.com/O5ten/dinners/internal/auth"
 	"github.com/O5ten/dinners/internal/i18n"
+	"github.com/O5ten/dinners/internal/store"
 )
 
 // loginThrottle slows down password guessing from a single address. It is a
@@ -117,8 +118,9 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
-// handleIdentityForm asks who the member is. The e-mail address is what ties
-// a registration to a household, so it is the one thing that is required.
+// handleIdentityForm asks who the member is. The Mattermost account is what
+// ties a registration to a household, so it is the one thing that is required —
+// and it is also where the confirmation goes.
 func (s *Server) handleIdentityForm(w http.ResponseWriter, r *http.Request, v *view) {
 	v.Title = i18n.T(v.Lang, "ident.title")
 	v.Data = map[string]any{
@@ -135,26 +137,43 @@ func (s *Server) handleIdentitySave(w http.ResponseWriter, r *http.Request, v *v
 			"error.form", "error.form.detail")
 		return
 	}
+	typed := strings.TrimSpace(r.FormValue("member"))
 	id := auth.Identity{
-		Name:      strings.TrimSpace(r.FormValue("name")),
-		Apartment: strings.TrimSpace(r.FormValue("apartment")),
-		Email:     auth.NormalizeEmail(r.FormValue("email")),
+		Name:       strings.TrimSpace(r.FormValue("name")),
+		Apartment:  strings.TrimSpace(r.FormValue("apartment")),
+		MMUsername: store.Member(typed),
 	}
-	var problem string
-	switch {
-	case id.Name == "":
-		problem = i18n.T(v.Lang, "ident.need.name")
-	case !auth.ValidEmail(id.Email):
-		problem = i18n.T(v.Lang, "ident.need.email")
-	}
-	if problem != "" {
+	reject := func(problem string) {
 		v.Title = i18n.T(v.Lang, "ident.title")
 		v.Data = map[string]any{"Next": r.FormValue("next"), "Form": id, "Error": problem}
 		s.render(w, r, http.StatusUnprocessableEntity, "identity.html", v)
+	}
+
+	// The field takes a username or a name, so it is looked up rather than
+	// trusted: a household whose account does not exist would be a household
+	// the confirmation never reaches.
+	user, problem := s.findMember(r.Context(), v.Lang, typed)
+	if problem != "" {
+		reject(problem)
 		return
 	}
+	id.MMUsername, id.MMUserID = store.Member(user.Username), user.ID
+	if id.MMUsername == "" {
+		// Nothing usable was typed — a lone "@", say. Without a chat server
+		// there is nobody to look it up against, so the emptiness only shows
+		// up here.
+		reject(i18n.T(v.Lang, "member.whose"))
+		return
+	}
+	// The name comes from the account unless the member wrote one themselves,
+	// the same way a cooking team's leader is named: one less thing to keep in
+	// step with the chat.
+	if id.Name == "" {
+		id.Name = user.DisplayName()
+	}
+
 	s.guard.Remember(w, id)
-	s.log.Info("identity set", "name", id.Name)
+	s.log.Info("identity set", "member", id.MMUsername)
 	http.Redirect(w, r, safeNext(r.FormValue("next")), http.StatusSeeOther)
 }
 

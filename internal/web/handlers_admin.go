@@ -3,7 +3,6 @@ package web
 import (
 	"database/sql"
 	"encoding/csv"
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -234,23 +233,13 @@ func (s *Server) handleAdminTeam(w http.ResponseWriter, r *http.Request, v *view
 		return
 	}
 	typed := strings.TrimSpace(r.FormValue("leader_username"))
-	leader, err := s.resolveLeader(ctx, typed)
-	if err != nil {
-		var many ambiguousLeader
-		switch {
-		case errors.As(err, &many):
-			s.renderError(w, r, http.StatusUnprocessableEntity,
-				i18n.T(v.Lang, "error.team.username.many", typed),
-				i18n.T(v.Lang, "error.team.username.many.detail", many.Who()))
-		case errors.Is(err, errNoSuchLeader):
-			s.renderError(w, r, http.StatusUnprocessableEntity,
-				i18n.T(v.Lang, "error.team.username", typed),
-				i18n.T(v.Lang, "error.team.username.detail"))
-		default:
-			s.log.Error("look up team leader", "typed", typed, "err", err)
-			s.errorPage(w, r, http.StatusBadGateway,
-				"error.team.username.unreachable", "error.team.username.unreachable.detail")
-		}
+	// The same lookup the household's own field uses, and the same sentences
+	// back: a name that means one person is that person, a name that means
+	// several says which, and a name that means nobody is refused.
+	leader, problem := s.resolveLeader(ctx, v.Lang, typed)
+	if problem != "" {
+		s.renderError(w, r, http.StatusUnprocessableEntity,
+			i18n.T(v.Lang, "error.team.leader"), problem)
 		return
 	}
 	// The name is never typed: it comes from the account, spelled the way its
@@ -658,7 +647,7 @@ func (s *Server) handleAdminCSV(w http.ResponseWriter, r *http.Request, v *view)
 	cw := csv.NewWriter(w)
 	defer cw.Flush()
 	cw.Write([]string{"datum", "veckodag", "matlag", "instald", "namn",
-		"lagenhet", "epost", "gast", "vard", "staende", "vuxna", "barn",
+		"lagenhet", "mattermost", "gast", "vard", "staende", "vuxna", "barn",
 		"kosthallning", "specialkost"})
 	for _, d := range dinners {
 		team := ""
@@ -672,7 +661,7 @@ func (s *Server) handleAdminCSV(w http.ResponseWriter, r *http.Request, v *view)
 		for _, a := range summaries[d.Key].Attendees {
 			cw.Write([]string{
 				d.Key, i18n.WeekdayShort(lang, d.Date), team, cancelled,
-				a.Name, a.Apartment, a.Email,
+				a.Name, a.Apartment, a.Member,
 				yesNo(a.Guest), a.Host, yesNo(a.Standing),
 				strconv.Itoa(a.Adults), strconv.Itoa(a.Children),
 				string(a.Diet), a.Note,

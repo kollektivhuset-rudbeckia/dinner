@@ -35,12 +35,12 @@ type Server struct {
 	rt    config.Runtime
 	store *store.Store
 	guard *auth.Guard
-	// mm is the bot that messages the cooking teams and answers the admin
-	// view's lookups of who is in the house.
+	// mm is the bot that confirms a household's registration, messages the
+	// cooking teams, and answers the pages' lookups of who is in the house.
 	mm  *mattermost.Client
 	log *slog.Logger
-	// members caches the house's Mattermost directory, which the teams page
-	// offers when an administrator names a leader.
+	// members caches the house's Mattermost directory, which the pickers offer
+	// when a household says who it is and when a team is given a leader.
 	members memberCache
 	// tpl holds one parsed set per language. The language is baked into the
 	// template functions, so a page can say {{t "key"}} and get the right
@@ -115,11 +115,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /gast", s.handleGuestSave)
 	mux.HandleFunc("GET /gast/{token}", s.handleGuestEdit)
 	mux.HandleFunc("POST /gast/{token}", s.handleGuestUpdate)
+	// A guest gets no message from us at all, so the evening is handed to
+	// their calendar from their own page, behind their own token.
+	mux.HandleFunc("GET /gast/{token}/kalender.ics", s.handleGuestICS)
 
 	// The printable list is reachable both by a logged-in member and by the
 	// signed link sent to the cooking-team leader, so it does its own check.
 	mux.HandleFunc("GET /middag/{date}/lista", s.handleList)
 	mux.HandleFunc("GET /middag/{date}/lista.csv", s.handleListCSV)
+
+	// Who is in the house, for the pickers on the identity form and in the
+	// admin view. Behind the house password, like the pages that use it.
+	mux.Handle("GET /medlemmar", s.member(s.handleMembers))
 
 	mux.Handle("GET /jagar", s.member(s.handleIdentityForm))
 	mux.Handle("POST /jagar", s.member(s.handleIdentitySave))
@@ -127,6 +134,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.Handle("GET /{$}", s.identified(s.handleIndex))
 	mux.Handle("GET /middag/{date}", s.identified(s.handleDinner))
+	mux.Handle("GET /middag/{date}/kalender.ics", s.member(s.handleDinnerICS))
 	mux.Handle("POST /middag/{date}", s.identified(s.handleRegister))
 	mux.Handle("GET /mina", s.identified(s.handleMine))
 	mux.Handle("POST /stadigvarande", s.identified(s.handleStanding))
@@ -139,7 +147,6 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /admin/schema", s.admin(s.handleAdminSchedule))
 	mux.Handle("POST /admin/installningar", s.admin(s.handleAdminSettings))
 	mux.Handle("POST /admin/skicka", s.admin(s.handleAdminSend))
-	mux.Handle("GET /admin/mattermost", s.admin(s.handleAdminMembers))
 	mux.Handle("POST /admin/anmalan", s.admin(s.handleAdminDeleteRegistration))
 	mux.Handle("GET /admin/export.csv", s.admin(s.handleAdminCSV))
 
@@ -235,10 +242,9 @@ func (s *Server) member(h func(http.ResponseWriter, *http.Request, *view)) http.
 }
 
 // identified additionally insists that the member has said who they are. The
-// e-mail address is the identifier every registration hangs on, so there is
-// nothing useful to show before it is known. It is the household's own
-// identifier and has nothing to do with the cooking teams' Mattermost
-// usernames, which are how the site reaches a leader.
+// Mattermost account is the identifier every registration hangs on, and it is
+// where the confirmation goes, so there is nothing useful to show before it is
+// known.
 func (s *Server) identified(h func(http.ResponseWriter, *http.Request, *view)) http.Handler {
 	return s.member(func(w http.ResponseWriter, r *http.Request, v *view) {
 		if !v.Ident.Known() {

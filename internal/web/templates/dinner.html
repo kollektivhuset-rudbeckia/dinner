@@ -24,7 +24,12 @@
 		{{with $d.Note}}<p class="note">{{.}}</p>{{end}}
 	</div>
 
-	{{if .Data.Saved}}<p class="alert alert-ok" role="status">{{t "dinner.saved"}}</p>{{end}}
+	{{if .Data.Saved}}<p class="alert alert-ok" role="status">
+		{{t "dinner.saved"}}
+		{{/* MMUserID, not the username: a household that said who it was while the
+		     bot was switched off has no account to send to. */}}
+		{{if and .ChatOn .Ident.MMUserID}}{{t "dinner.saved.dm" .Ident.MMUsername}}{{end}}
+	</p>{{end}}
 	{{with .Data.Error}}<p class="alert alert-error" role="alert">{{.}}</p>{{end}}
 
 	{{/* Where the household stands right now, in one sentence. */}}
@@ -84,6 +89,11 @@
 		{{- t "dinner.closed.talk" (dateTime $d.Closes) $who}}
 	</p>
 	{{end}}
+
+	{{/* Coming means there is an evening worth keeping, so it is offered to
+	     whatever calendar the household actually uses. The same evening is
+	     attached to the confirmation the bot sends. */}}
+	{{if and .Data.Coming .Data.Calendar}}{{template "calendar" .Data.Calendar}}{{end}}
 
 	<p class="back">
 		<a class="quiet-link" href="/">{{t "dinner.back"}}</a>

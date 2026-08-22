@@ -25,9 +25,10 @@ type Attendee struct {
 	// Standing marks a household that has not answered for this evening; the
 	// numbers come from its default for this weekday.
 	Standing bool
-	// Email identifies the household. It is deliberately never rendered to
-	// anyone but that household and the administrator.
-	Email string
+	// Member is the household's Mattermost username, which identifies it. It
+	// is deliberately never rendered to anyone but that household and the
+	// administrator.
+	Member string
 }
 
 // People is how many will eat.
@@ -98,8 +99,8 @@ func (s Summary) Count(d store.Diet) int {
 func Resolve(regs []store.Registration, standing []store.Standing) Summary {
 	answered := make(map[string]bool, len(regs))
 	for _, r := range regs {
-		if r.Kind == store.KindMember && r.Email != "" {
-			answered[r.Email] = true
+		if r.Kind == store.KindMember && r.Member != "" {
+			answered[r.Member] = true
 		}
 	}
 
@@ -135,17 +136,17 @@ func Resolve(regs []store.Registration, standing []store.Standing) Summary {
 		add(Attendee{
 			ID: r.ID, Name: r.Name, Apartment: r.Apartment,
 			Adults: r.Adults, Children: r.Children, Diet: r.Diet,
-			Note: r.Note, Host: r.Host, Guest: r.Guest(), Email: r.Email,
+			Note: r.Note, Host: r.Host, Guest: r.Guest(), Member: r.Member,
 		})
 	}
 	for _, st := range standing {
-		if answered[st.Email] {
+		if answered[st.Member] {
 			continue
 		}
 		add(Attendee{
 			Name: st.Name, Apartment: st.Apartment,
 			Adults: st.Adults, Children: st.Children, Diet: st.Diet,
-			Note: st.Note, Standing: true, Email: st.Email,
+			Note: st.Note, Standing: true, Member: st.Member,
 		})
 	}
 
