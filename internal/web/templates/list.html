@@ -86,7 +86,7 @@
 					{{if .ID}}
 					<form method="post" action="/admin/anmalan">
 						<input type="hidden" name="id" value="{{.ID}}">
-						<input type="hidden" name="back" value="/admin?flik=schema">
+						<input type="hidden" name="flik" value="schema">
 						<button type="submit" class="link-button danger-text"
 						        data-confirm="{{t "list.remove.confirm" .Name}}">{{t "remove"}}</button>
 					</form>

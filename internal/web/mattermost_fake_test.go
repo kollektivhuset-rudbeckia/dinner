@@ -25,6 +25,10 @@ type fakeMattermost struct {
 	dms   []sentDM
 	files map[string]sentFile // uploaded file id -> the file
 	calls map[string]int      // API path -> number of requests
+	// forbidDirectory makes listing every account fail the way a real server
+	// does for a bot that was never made a system admin. Searching still
+	// works, which is the case the picker has to survive.
+	forbidDirectory bool
 }
 
 // sentDM is one direct message the bot delivered.
@@ -85,6 +89,14 @@ func newFakeMattermost(t *testing.T) *fakeMattermost {
 	}
 
 	mux.HandleFunc("GET /api/v4/users", count("users", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		forbidden := f.forbidDirectory
+		f.mu.Unlock()
+		if forbidden {
+			http.Error(w, `{"message":"You do not have the appropriate permissions."}`,
+				http.StatusForbidden)
+			return
+		}
 		if r.URL.Query().Get("active") != "true" {
 			t.Errorf("the directory listing should ask for active accounts only: %s", r.URL)
 		}

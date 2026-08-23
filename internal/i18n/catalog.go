@@ -105,6 +105,11 @@ var catalog = map[string]entry{
 	"member.several.named":    {"Flera personer heter %s: %s. Skriv lite mer, eller välj i listan.", "Several people are called %s: %s. Type a little more, or pick from the list."},
 	"member.several.matching": {"Flera personer stämmer på %s: %s. Skriv lite mer, eller välj i listan.", "Several people match %s: %s. Type a little more, or pick from the list."},
 	"member.andmore":          {"…", "…"},
+	// What the picker itself says when it has nothing to offer. An empty list
+	// and an unreachable server look the same in a browser, and telling them
+	// apart is the difference between "check the spelling" and "not my fault".
+	"member.picker.none":  {"Ingen i huset stämmer på det.", "Nobody in the house matches that."},
+	"member.picker.error": {"Kunde inte nå Mattermost — skriv användarnamnet.", "Could not reach Mattermost — type the username instead."},
 
 	// --- keeping the evening in your own calendar ----------------------------
 	"cal.title":          {"Lägg in i kalendern", "Add it to your calendar"},
@@ -414,6 +419,8 @@ var catalog = map[string]entry{
 	"admin.teams.order.down":     {"Flytta %s nedåt", "Move %s down"},
 	"admin.teams.off":            {"avstängt", "switched off"},
 	"admin.teams.none":           {"Inga matlag ännu.", "No teams yet."},
+	"admin.teams.saveall":        {"Spara alla lag", "Save every team"},
+	"admin.teams.thelist.body":   {"Ändra så många lag du vill och spara allt på en gång.", "Change as many teams as you like and save them all at once."},
 	"admin.teams.thelist":        {"Lagen", "The teams"},
 	"admin.teams.team":           {"Lag", "Team"},
 	"admin.teams.leader":         {"Lagledare", "Team leader"},

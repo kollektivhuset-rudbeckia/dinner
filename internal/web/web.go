@@ -46,7 +46,10 @@ type Server struct {
 	// template functions, so a page can say {{t "key"}} and get the right
 	// words without every call site passing a language around.
 	tpl map[i18n.Lang]map[string]*template.Template
-	now func() time.Time
+	// assets maps each file in static/ to a hash of its contents, so a page
+	// can link it by an address that changes whenever the file does.
+	assets map[string]string
+	now    func() time.Time
 }
 
 // pages are the top-level templates. Each is parsed into its own set together
@@ -63,6 +66,17 @@ var layouts = []string{"base.html", "fields.html"}
 // New builds the HTTP server.
 func New(cfg *config.Config, rt config.Runtime, st *store.Store, guard *auth.Guard, mm *mattermost.Client, log *slog.Logger) (*Server, error) {
 	s := &Server{cfg: cfg, rt: rt, store: st, guard: guard, mm: mm, log: log, now: time.Now}
+
+	// The versions have to exist before the templates are parsed: {{asset}}
+	// reads them.
+	static, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		return nil, fmt.Errorf("read the static files: %w", err)
+	}
+	if s.assets, err = assetVersions(static); err != nil {
+		return nil, fmt.Errorf("fingerprint the static files: %w", err)
+	}
+
 	s.tpl = make(map[i18n.Lang]map[string]*template.Template, len(i18n.Langs))
 	for _, lang := range i18n.Langs {
 		set := make(map[string]*template.Template, len(pages))
@@ -141,6 +155,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.Handle("GET /admin", s.admin(s.handleAdmin))
 	mux.Handle("POST /admin/lag", s.admin(s.handleAdminTeam))
+	mux.Handle("POST /admin/lag/alla", s.admin(s.handleAdminTeams))
 	mux.Handle("POST /admin/sasong", s.admin(s.handleAdminSeason))
 	mux.Handle("POST /admin/lag/ordning", s.admin(s.handleAdminOrder))
 	mux.Handle("POST /admin/uppehall", s.admin(s.handleAdminBreak))
@@ -408,6 +423,7 @@ func (s *Server) funcs(lang i18n.Lang) template.FuncMap {
 		},
 		"dict":      dict,
 		"hasPrefix": strings.HasPrefix,
+		"asset":     s.asset,
 	}
 }
 
@@ -432,13 +448,6 @@ func securityHeaders(next http.Handler) http.Handler {
 		// Everything is served from this origin; no external scripts or styles.
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
-		next.ServeHTTP(w, r)
-	})
-}
-
-func cacheStatic(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "public, max-age=3600")
 		next.ServeHTTP(w, r)
 	})
 }

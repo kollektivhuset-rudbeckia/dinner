@@ -10,16 +10,9 @@
 			     a list of the house's own people. Without JavaScript, or
 			     without a chat server, it stays a box that takes a username. */}}
 			<label for="member">{{t "ident.member"}}</label>
-			<div class="member-field">
-				<span class="member-at" aria-hidden="true">@</span>
-				<input id="member" name="member" type="text" required autofocus
-				       autocomplete="off" spellcheck="false" autocapitalize="none"
-				       aria-controls="member-list" value="{{.Data.Form.MMUsername}}"
-				       placeholder="Anna Andersson"
-				       data-member-search data-member-name="#name">
-				<ul class="combo-list" id="member-list" role="listbox"
-				    aria-label="{{t "ident.member.list"}}" hidden></ul>
-			</div>
+			{{template "memberfield" dict
+				"ID" "member" "Name" "member" "Value" .Data.Form.MMUsername
+				"NameField" "#name" "Required" true "Autofocus" true}}
 			<small class="hint">
 				{{if .ChatOn}}{{t "ident.member.hint"}}{{else}}{{t "ident.member.nochat"}}{{end}}
 			</small>

@@ -466,6 +466,8 @@ label { font-size: .85rem; }
 	background: var(--accent-soft); color: var(--accent-strong);
 }
 .combo-option[aria-selected="true"] span { color: inherit; }
+/* Not somebody to pick: a reason there is nobody to pick. */
+.combo-note { padding: .4rem .55rem; color: var(--text-faint); font-size: .85rem; }
 
 /* Handing an evening to the calendar the household already keeps. */
 .calbuttons { display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: 1.5rem; }

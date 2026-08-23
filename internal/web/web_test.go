@@ -1049,7 +1049,7 @@ func TestThePickersOfferTheHouse(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v — %s", err, rec.Body.String())
 	}
-	if len(got.Users) != 5 || got.Truncated {
+	if len(got.Users) != 5 || got.AskServer || got.Unreachable {
 		t.Fatalf("offered %+v", got)
 	}
 	// Sorted by the name the reader reads, and nobody who has left.
@@ -2017,5 +2017,270 @@ func TestTheConfirmationFollowsTheChatsLanguage(t *testing.T) {
 	anna.post("/middag/"+openDay, party(1, 0, store.DietOmnivore, ""))
 	if got := h.chat.waitForDMTo(t, "anna.andersson", 1); !strings.Contains(got.Message, "Hej Anna!") {
 		t.Errorf("Anna should get the house's language:\n%s", got.Message)
+	}
+}
+
+// --- the picker when the directory is out of reach ---------------------------
+
+// Listing every account in a Mattermost needs rights a bot token is not
+// usually given; searching needs none. The picker used to fetch the list, get
+// a 502 back from our own server, catch it and offer nothing — a field that
+// looked simply broken, which is what it was reported as. It has to say what
+// it cannot do, and leave the browser a way through.
+func TestThePickerFallsBackWhenTheDirectoryIsForbidden(t *testing.T) {
+	h := newChatHarness(t)
+	h.chat.mu.Lock()
+	h.chat.forbidDirectory = true
+	h.chat.mu.Unlock()
+
+	c := h.client(t)
+	c.login("adm")
+	c.identify("Chef", "cecilia.dahl")
+
+	rec := c.get("/medlemmar")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a directory we may not read should still answer the picker, got %d", rec.Code)
+	}
+	var got memberList
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v — %s", err, rec.Body.String())
+	}
+	if !got.AskServer {
+		t.Error("the browser was not told to let the server search")
+	}
+	if !got.Unreachable {
+		t.Error("a failed lookup was reported as an empty house")
+	}
+
+	// And the route it was pointed at works: searching asks Mattermost, which
+	// a bot is allowed to do.
+	rec = c.get("/medlemmar?q=ostberg")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("search = %d", rec.Code)
+	}
+	got = memberList{}
+	json.Unmarshal(rec.Body.Bytes(), &got)
+	if len(got.Users) != 1 || got.Users[0].Username != "mikael.ostberg" {
+		t.Fatalf("search offered %+v", got.Users)
+	}
+	if got.Unreachable {
+		t.Error("a search that worked was reported as unreachable")
+	}
+}
+
+// --- saving in the admin view -----------------------------------------------
+
+// Every save used to land on the first tab, because the hidden field it
+// redirected through named a URL with no tab in it. Worse, the "sparat" query
+// was appended after a "#lag" fragment, where the browser never sends it — so
+// the confirmation did not show either.
+func TestSavingStaysOnTheTabItWasMadeOn(t *testing.T) {
+	h := newHarness(t)
+	c := h.client(t)
+	c.login("adm")
+
+	for _, tc := range []struct {
+		name string
+		path string
+		form url.Values
+	}{
+		{"teams", "/admin/lag", url.Values{
+			"flik": {"lag"}, "name": {"Lag 9"}, "active": {"1"}}},
+		{"order", "/admin/lag/ordning", url.Values{
+			"flik": {"lag"}, "down": {itoa(int(h.teams[0]))}}},
+		{"breaks", "/admin/uppehall", url.Values{
+			"flik": {"uppehall"}, "name": {"Jul"},
+			"start": {"2026-12-21"}, "end": {"2027-01-06"}}},
+		{"settings", "/admin/installningar", url.Values{
+			"flik": {"installningar"}, "deadline_weekday": {"3"},
+			"deadline_time": {"18:00"}, "deadline_weeks_before": {"1"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := c.post(tc.path, tc.form)
+			if rec.Code != http.StatusSeeOther {
+				t.Fatalf("%s = %d — %s", tc.path, rec.Code, rec.Body.String())
+			}
+			loc, err := url.Parse(rec.Header().Get("Location"))
+			if err != nil {
+				t.Fatalf("Location: %v", err)
+			}
+			want := tc.form.Get("flik")
+			if got := loc.Query().Get("flik"); got != want {
+				t.Errorf("came back to tab %q, wanted %q (%s)", got, want, loc)
+			}
+			// The confirmation has to survive the trip too, which means the
+			// query cannot be hidden behind the fragment.
+			if loc.Query().Get("sparat") == "" {
+				t.Errorf("nothing to confirm the save: %s", loc)
+			}
+		})
+	}
+}
+
+// The schedule is shown one season at a time, so a save there has to come back
+// to the season it was made in.
+func TestSavingAnEveningKeepsTheSeasonInView(t *testing.T) {
+	h := newHarness(t)
+	c := h.client(t)
+	c.login("adm")
+
+	seasons, _ := h.store.Seasons(context.Background())
+	if len(seasons) == 0 {
+		t.Fatal("no season to save in")
+	}
+	season := itoa(int(seasons[0].ID))
+
+	rec := c.post("/admin/schema", url.Values{
+		"flik": {"schema"}, "sasong": {season},
+		"date": {openDay}, "note": {"Soppa"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("save = %d — %s", rec.Code, rec.Body.String())
+	}
+	loc, _ := url.Parse(rec.Header().Get("Location"))
+	if got := loc.Query().Get("sasong"); got != season {
+		t.Errorf("came back to season %q, wanted %q (%s)", got, season, loc)
+	}
+	if got := loc.Query().Get("flik"); got != "schema" {
+		t.Errorf("came back to tab %q (%s)", got, loc)
+	}
+}
+
+// Setting a season up means naming several teams and their leaders. Saving one
+// row at a time was a page load and a lost scroll position per team, so the
+// whole list saves at once.
+func TestEveryTeamSavesAtOnce(t *testing.T) {
+	h := newChatHarness(t)
+	c := h.client(t)
+	c.login("adm")
+	c.identify("Chef", "cecilia.dahl")
+
+	teams, _ := h.store.Teams(context.Background())
+	if len(teams) < 2 {
+		t.Fatalf("need at least two teams to save together, have %d", len(teams))
+	}
+	first, second := teams[0], teams[1]
+
+	form := url.Values{"flik": {"lag"}}
+	form.Add("id", itoa(int(first.ID)))
+	form.Add("id", itoa(int(second.ID)))
+	form.Set("name_"+itoa(int(first.ID)), "Kokerskorna")
+	form.Set("leader_"+itoa(int(first.ID)), "anna.a")
+	form.Set("active_"+itoa(int(first.ID)), "1")
+	form.Set("name_"+itoa(int(second.ID)), "Grytan")
+	form.Set("leader_"+itoa(int(second.ID)), "Mikael Östberg")
+	// The second team is left out of the rotation, which a missing checkbox is
+	// how a browser says.
+
+	rec := c.post("/admin/lag/alla", form)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("save all = %d — %s", rec.Code, rec.Body.String())
+	}
+
+	after, _ := h.store.Teams(context.Background())
+	byID := map[int64]store.Team{}
+	for _, t := range after {
+		byID[t.ID] = t
+	}
+	if got := byID[first.ID]; got.Name != "Kokerskorna" ||
+		got.LeaderUsername != "anna.a" || !got.Active {
+		t.Errorf("the first team = %+v", got)
+	}
+	// A leader named rather than typed still resolves to the account, and the
+	// name comes back from it.
+	if got := byID[second.ID]; got.Name != "Grytan" ||
+		got.LeaderUsername != "mikael.ostberg" ||
+		got.LeaderName != "Mikael Östberg" || got.Active {
+		t.Errorf("the second team = %+v", got)
+	}
+}
+
+// A leader who is a typo must not take the rest of the list down with it, and
+// must not be saved half-way either: nothing changes until every row can.
+func TestOneBadLeaderRefusesTheWholeSave(t *testing.T) {
+	h := newChatHarness(t)
+	c := h.client(t)
+	c.login("adm")
+	c.identify("Chef", "cecilia.dahl")
+
+	teams, _ := h.store.Teams(context.Background())
+	first, second := teams[0], teams[1]
+
+	form := url.Values{"flik": {"lag"}}
+	form.Add("id", itoa(int(first.ID)))
+	form.Add("id", itoa(int(second.ID)))
+	form.Set("name_"+itoa(int(first.ID)), "Nytt namn")
+	form.Set("leader_"+itoa(int(first.ID)), "anna.a")
+	form.Set("name_"+itoa(int(second.ID)), "Grytan")
+	form.Set("leader_"+itoa(int(second.ID)), "ingen.som.finns")
+
+	rec := c.post("/admin/lag/alla", form)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("save all = %d, wanted it refused", rec.Code)
+	}
+	// The team the reader has to go and fix is named, which is the whole point
+	// of reporting the row rather than the field.
+	if body := rec.Body.String(); !strings.Contains(body, second.Name) {
+		t.Errorf("the refusal does not say which team: %s", body)
+	}
+
+	after, _ := h.store.Teams(context.Background())
+	if after[0].Name != first.Name {
+		t.Errorf("the good row was saved anyway: %+v", after[0])
+	}
+}
+
+// --- the stylesheet and the scripts -----------------------------------------
+
+// An upgrade changes app.css without changing its address, so a browser that
+// cached the previous one keeps it — which is how an upgraded site rendered
+// with the stylesheet of the version before it, putting the @ of the
+// Mattermost field above its box instead of inside it. Every asset is
+// addressed by its contents now, so a new build is an address no cache can
+// answer from.
+func TestTheStylesheetIsAddressedByItsContents(t *testing.T) {
+	h := newHarness(t)
+	c := h.client(t)
+
+	// The login page, because it is the one page a browser reaches before it
+	// has anything else — and the first chance to hand it a stale stylesheet.
+	body := c.get("/login").Body.String()
+	for _, file := range []string{"app.css", "app.js", "members.js"} {
+		if !strings.Contains(body, "/static/"+file+"?v=") {
+			t.Errorf("%s is linked without a version: a cache will keep the old one", file)
+		}
+	}
+
+	// A versioned address may be kept forever, because its contents cannot
+	// change without the address changing.
+	versioned := c.get("/static/app.css?v=" + h.assets["app.css"])
+	if versioned.Code != http.StatusOK {
+		t.Fatalf("versioned stylesheet = %d", versioned.Code)
+	}
+	if cc := versioned.Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+		t.Errorf("versioned Cache-Control = %q", cc)
+	}
+
+	// The bare address might be a previous build's, so it gets a short life.
+	bare := c.get("/static/app.css")
+	if cc := bare.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age=60") {
+		t.Errorf("unversioned Cache-Control = %q, wanted a short one", cc)
+	}
+}
+
+// Editing a static file has to change its address, or the fingerprinting is
+// decoration.
+func TestEachAssetHasItsOwnVersion(t *testing.T) {
+	h := newHarness(t)
+	if len(h.assets) == 0 {
+		t.Fatal("no assets were fingerprinted")
+	}
+	if h.assets["app.css"] == h.assets["app.js"] {
+		t.Errorf("two different files share a version: %q", h.assets["app.css"])
+	}
+	for name, version := range h.assets {
+		if len(version) != 8 {
+			t.Errorf("%s has version %q", name, version)
+		}
 	}
 }

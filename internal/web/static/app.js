@@ -125,7 +125,8 @@
 		var nameSelector = field.getAttribute('data-member-name');
 		var nameField = nameSelector ? document.querySelector(nameSelector) : null;
 		var index = null;      // the searchable directory, once fetched
-		var remote = false;    // too many people to hold: let the server search
+		var remote = false;    // ask the server to search instead of indexing
+		var broken = false;    // the last lookup did not reach Mattermost
 		var loading = null;    // the fetch in flight, so it happens once
 		var shown = [];        // what the list currently offers
 		var active = -1;       // which option the keyboard is on
@@ -165,11 +166,27 @@
 			close();
 		};
 
+		// note puts a sentence where the people would go. Offering nothing at
+		// all is indistinguishable from a field that does not work, which is
+		// exactly how an unreachable chat server used to look.
+		var note = function (message) {
+			if (!message) { close(); return; }
+			shown = [];
+			active = -1;
+			list.innerHTML = '';
+			var item = document.createElement('li');
+			item.className = 'combo-note';
+			item.textContent = message;
+			list.appendChild(item);
+			list.hidden = false;
+			field.setAttribute('aria-expanded', 'true');
+		};
+
 		var render = function (users) {
 			shown = users;
 			list.innerHTML = '';
 			if (!users.length) {
-				close();
+				note(field.getAttribute(broken ? 'data-member-error' : 'data-member-none'));
 				return;
 			}
 			users.forEach(function (user, i) {
@@ -207,8 +224,16 @@
 					if (!response.ok) { throw new Error('status ' + response.status); }
 					return response.json();
 				})
-				.then(function (data) { render(data.users || []); })
-				.catch(function () { /* the field still works as plain text */ });
+				.then(function (data) {
+					broken = !!data.unreachable;
+					render(data.users || []);
+				})
+				.catch(function (err) {
+					// An aborted request is the next keystroke's, not a failure.
+					if (err && err.name === 'AbortError') { return; }
+					broken = true;
+					note(field.getAttribute('data-member-error'));
+				});
 		};
 
 		// load fetches the directory once, and remembers if it was too big.
@@ -221,10 +246,21 @@
 					return response.json();
 				})
 				.then(function (data) {
-					remote = !!data.truncated;
-					index = window.RBMembers.buildIndex(data.users || []);
+					// askServer covers both a house too large to send and one
+					// the bot may not list — listing everybody needs rights a
+					// bot token usually lacks, while searching does not. Either
+					// way the picker keeps working by asking us instead.
+					remote = !!data.askServer;
+					broken = !!data.unreachable;
+					index = remote ? null : window.RBMembers.buildIndex(data.users || []);
 				})
-				.catch(function () { index = null; });
+				.catch(function () {
+					// Even the request failed. Searching on the server is the
+					// only route left, so let typing try it.
+					index = null;
+					remote = true;
+					broken = true;
+				});
 			return loading;
 		};
 
@@ -236,7 +272,12 @@
 				return;
 			}
 			load().then(function () {
-				if (!index || field.value.trim() !== term) { return; }
+				if (field.value.trim() !== term) { return; }
+				if (!index) {
+					// load() decided we cannot hold the directory ourselves.
+					if (term.length >= 2) { ask(term); } else { close(); }
+					return;
+				}
 				render(window.RBMembers.search(index, term));
 			});
 		};
@@ -255,6 +296,9 @@
 		field.addEventListener('keydown', function (event) {
 			if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
 				if (list.hidden) { update(); return; }
+				// The list may be holding a sentence rather than people, and a
+				// sentence is not something to arrow onto.
+				if (!shown.length) { return; }
 				event.preventDefault();
 				highlight(active + (event.key === 'ArrowDown' ? 1 : -1));
 				return;

@@ -27,11 +27,21 @@ type memberSuggestion struct {
 }
 
 // memberList is the picker's whole world: everyone in the house's Mattermost.
-// Truncated says the server is too large to send at once, so the browser
-// should ask this server to search instead of indexing the list itself.
+//
+// AskServer tells the browser not to rely on Users: it should send what was
+// typed here and let this server search. Two things ask for that — a directory
+// too large to send at once, and a directory the bot is not allowed to list at
+// all. Listing everybody needs rights a bot token is not usually given, while
+// searching needs none beyond seeing the people it shares a team with, so the
+// picker has to keep working when only the second is available.
+//
+// Unreachable says the lookup failed rather than found nobody. An empty list
+// and a broken one look identical to a browser, and the difference is the
+// whole message: "nobody by that name" or "Mattermost could not be reached".
 type memberList struct {
-	Users     []memberSuggestion `json:"users"`
-	Truncated bool               `json:"truncated"`
+	Users       []memberSuggestion `json:"users"`
+	AskServer   bool               `json:"askServer"`
+	Unreachable bool               `json:"unreachable"`
 }
 
 // memberCache holds the directory between requests.
@@ -60,9 +70,16 @@ func (s *Server) handleMembers(w http.ResponseWriter, r *http.Request, v *view) 
 		out, err = s.memberDirectory(r.Context())
 	}
 	if err != nil {
-		s.log.Error("mattermost directory", "err", err)
-		http.Error(w, `{"error":"could not read the Mattermost directory"}`, http.StatusBadGateway)
-		return
+		// A failure here used to be a 502, which the picker had no answer for:
+		// it caught the error, offered nothing, and left a field that looked
+		// like it simply did not work. Saying so instead lets the browser fall
+		// back to asking us to search, and show a reason if that fails too.
+		s.log.Error("mattermost lookup", "q", r.URL.Query().Get("q"), "err", err)
+		out = memberList{
+			Users:       []memberSuggestion{},
+			AskServer:   true,
+			Unreachable: true,
+		}
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
@@ -97,6 +114,7 @@ func (s *Server) memberDirectory(ctx context.Context) (memberList, error) {
 
 	users, truncated, err := s.mm.Directory(ctx)
 	if err != nil {
+		// Not cached: the next keystroke should be free to try again.
 		return memberList{Users: []memberSuggestion{}}, err
 	}
 	if truncated {
@@ -105,7 +123,7 @@ func (s *Server) memberDirectory(ctx context.Context) (memberList, error) {
 			"listed", len(users), "limit", mattermost.DirectoryLimit)
 	}
 
-	list := memberList{Users: suggestions(users), Truncated: truncated}
+	list := memberList{Users: suggestions(users), AskServer: truncated}
 	s.members.list, s.members.at = list, s.now()
 	return list, nil
 }

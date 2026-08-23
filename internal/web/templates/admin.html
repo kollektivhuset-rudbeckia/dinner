@@ -34,6 +34,7 @@
 		<span class="muted small">
 			{{if .Data.Seasons}}
 			<form method="get" action="/admin" class="inline">
+				<input type="hidden" name="flik" value="schema">
 				<select name="sasong" onchange="this.form.submit()" aria-label="{{t "admin.schedule.pickseason"}}">
 					{{range .Data.Seasons}}
 					<option value="{{.ID}}" {{if and $.Data.Season (eq .ID $.Data.Season.ID)}}selected{{end}}>{{.Name}}</option>
@@ -52,7 +53,8 @@
 		{{$d := .Dinner}}
 		<form method="post" action="/admin/schema" class="sched-row{{if $d.Cancelled}} is-cancelled{{end}}">
 			<input type="hidden" name="date" value="{{$d.Key}}">
-			<input type="hidden" name="back" value="/admin?sasong={{$d.Season.ID}}#schema">
+			<input type="hidden" name="flik" value="schema">
+			<input type="hidden" name="sasong" value="{{$d.Season.ID}}">
 			<div class="sched-when">
 				<strong>{{weekdayShort $d.Date}} {{dateShort $d.Date}}</strong>
 				<small class="muted">{{t "admin.schedule.week" $d.Week}}</small>
@@ -94,7 +96,8 @@
 		</form>
 		<form method="post" action="/admin/skicka" class="sched-send">
 			<input type="hidden" name="date" value="{{$d.Key}}">
-			<input type="hidden" name="back" value="/admin?sasong={{$d.Season.ID}}#schema">
+			<input type="hidden" name="flik" value="schema">
+			<input type="hidden" name="sasong" value="{{$d.Season.ID}}">
 			<button type="submit" class="link-button"
 			        data-confirm="{{t "admin.schedule.send.confirm" (dateShort $d.Date)}}">
 				{{if .Sent}}{{t "admin.schedule.sendagain"}}{{else}}{{t "admin.schedule.sendnow"}}{{end}}
@@ -130,7 +133,7 @@
 	<h3 class="section-title">{{t "admin.teams.order"}}</h3>
 	<p class="muted small">{{t "admin.teams.order.body"}}</p>
 	<form method="post" action="/admin/lag/ordning" data-order-form>
-		<input type="hidden" name="back" value="/admin?flik=lag">
+		<input type="hidden" name="flik" value="lag">
 		<input type="hidden" name="order" value="{{range $i, $t := .Data.Teams}}{{if $i}},{{end}}{{$t.ID}}{{end}}" data-order-value>
 		<ol class="order-list" data-order-list>
 			{{range $i, $t := .Data.Teams}}
@@ -164,56 +167,54 @@
 	</form>
 
 	<h3 class="section-title">{{t "admin.teams.thelist"}}</h3>
-	<div class="team-list">
+	<p class="muted small">{{t "admin.teams.thelist.body"}}</p>
+	{{/* One form around every team, so setting a season up is one save rather
+	     than one per team. The fields are keyed by team id — name_7, leader_7,
+	     active_7 — because a plain "name" repeated down the page would arrive as
+	     a list with nothing tying it to the row it came from. */}}
+	<form method="post" action="/admin/lag/alla" class="team-list">
+		<input type="hidden" name="flik" value="lag">
 		{{range .Data.Teams}}
-		<form method="post" action="/admin/lag" class="team-row">
+		<div class="team-row">
 			<input type="hidden" name="id" value="{{.ID}}">
-			<input type="hidden" name="back" value="/admin#lag">
-			<div class="field"><label>{{t "admin.teams.team"}}<input name="name" type="text" value="{{.Name}}" required></label></div>
+			<div class="field">
+				<label for="team-{{.ID}}">{{t "admin.teams.team"}}</label>
+				<input id="team-{{.ID}}" name="name_{{.ID}}" type="text" value="{{.Name}}" required>
+			</div>
 			<div class="field">
 				<label for="leader-{{.ID}}">{{t "admin.teams.leader"}} <small>Mattermost</small></label>
-				{{/* The same picker the household uses to say who it is: search
-				     by name or by username, and a typed username still works
-				     without JavaScript. */}}
-				<div class="member-field">
-					<span class="member-at" aria-hidden="true">@</span>
-					<input id="leader-{{.ID}}" name="leader_username" type="text"
-					       value="{{.LeaderUsername}}" placeholder="Anna Andersson"
-					       aria-controls="leader-{{.ID}}-list" autocapitalize="none"
-					       autocomplete="off" spellcheck="false" data-member-search>
-					<ul class="combo-list" id="leader-{{.ID}}-list" role="listbox"
-					    aria-label="{{t "ident.member.list"}}" hidden></ul>
-				</div>
+				{{template "memberfield" dict
+					"ID" (printf "leader-%d" .ID) "Name" (printf "leader_%d" .ID)
+					"Value" .LeaderUsername}}
 				{{if .LeaderName}}<small class="muted">{{.LeaderName}}</small>{{end}}
 			</div>
-			<label class="checkbox"><input type="checkbox" name="active" value="1" {{if .Active}}checked{{end}}><span>{{t "admin.teams.inrotation"}}</span></label>
+			<label class="checkbox"><input type="checkbox" name="active_{{.ID}}" value="1" {{if .Active}}checked{{end}}><span>{{t "admin.teams.inrotation"}}</span></label>
 			<div class="team-actions">
-				<button type="submit" class="button small">{{t "save"}}</button>
-				<button type="submit" class="button small ghost danger" name="action" value="delete"
+				{{/* formnovalidate: removing a team must not be blocked by an empty
+				     name somewhere else in the form. */}}
+				<button type="submit" class="button small ghost danger" name="delete" value="{{.ID}}"
 				        formnovalidate data-confirm="{{t "admin.teams.delete.confirm" .Name}}">{{t "remove"}}</button>
 			</div>
-		</form>
+		</div>
 		{{else}}
 		<p class="empty">{{t "admin.teams.none.add"}}</p>
 		{{end}}
-	</div>
+		{{if .Data.Teams}}
+		<div class="form-actions">
+			<button type="submit" class="button primary">{{t "admin.teams.saveall"}}</button>
+		</div>
+		{{end}}
+	</form>
 
 	<h3 class="section-title">{{t "admin.teams.new"}}</h3>
 	<p class="muted small">{{t "admin.teams.new.hint"}}</p>
 	<form method="post" action="/admin/lag" class="team-row">
-		<input type="hidden" name="back" value="/admin#lag">
+		<input type="hidden" name="flik" value="lag">
 		<div class="field"><label>{{t "admin.teams.team"}}<input name="name" type="text" required placeholder="Lag 1"></label></div>
 		<div class="field">
 			<label for="leader-new">{{t "admin.teams.leader"}} <small>Mattermost</small></label>
-			<div class="member-field">
-				<span class="member-at" aria-hidden="true">@</span>
-				<input id="leader-new" name="leader_username" type="text"
-				       placeholder="Anna Andersson" aria-controls="leader-new-list"
-				       autocapitalize="none" autocomplete="off" spellcheck="false"
-				       data-member-search>
-				<ul class="combo-list" id="leader-new-list" role="listbox"
-				    aria-label="{{t "ident.member.list"}}" hidden></ul>
-			</div>
+			{{template "memberfield" dict
+				"ID" "leader-new" "Name" "leader_username"}}
 		</div>
 		<label class="checkbox"><input type="checkbox" name="active" value="1" checked><span>{{t "admin.teams.inrotation"}}</span></label>
 		<div class="team-actions"><button type="submit" class="button small primary">{{t "add"}}</button></div>
@@ -230,7 +231,7 @@
 	{{range .Data.Seasons}}
 	<form method="post" action="/admin/sasong" class="season-row">
 		<input type="hidden" name="id" value="{{.ID}}">
-		<input type="hidden" name="back" value="/admin#sasonger">
+		<input type="hidden" name="flik" value="sasonger">
 		<div class="field"><label>{{t "admin.seasons.name"}}<input name="name" type="text" value="{{.Name}}" required></label></div>
 		<div class="field"><label>{{t "admin.seasons.from"}}<input name="start" type="date" value="{{.Start}}" required></label></div>
 		<div class="field"><label>{{t "admin.seasons.to"}}<input name="end" type="date" value="{{.End}}" required></label></div>
@@ -261,7 +262,7 @@
 
 	<h3 class="section-title">{{t "admin.seasons.new"}}</h3>
 	<form method="post" action="/admin/sasong" class="season-row">
-		<input type="hidden" name="back" value="/admin#sasonger">
+		<input type="hidden" name="flik" value="sasonger">
 		<div class="field"><label>{{t "admin.seasons.name"}}<input name="name" type="text" placeholder="{{t "admin.seasons.placeholder" .Now.Year}}" required></label></div>
 		<div class="field"><label>{{t "admin.seasons.from"}}<input name="start" type="date" required></label></div>
 		<div class="field"><label>{{t "admin.seasons.to"}}<input name="end" type="date" required></label></div>
@@ -293,7 +294,7 @@
 	{{range .Data.Breaks}}
 	<form method="post" action="/admin/uppehall" class="season-row">
 		<input type="hidden" name="id" value="{{.ID}}">
-		<input type="hidden" name="back" value="/admin#uppehall">
+		<input type="hidden" name="flik" value="uppehall">
 		<div class="field"><label>{{t "admin.breaks.what"}}<input name="name" type="text" value="{{.Name}}" required></label></div>
 		<div class="field"><label>{{t "admin.seasons.from"}}<input name="start" type="date" value="{{.Start}}" required></label></div>
 		<div class="field"><label>{{t "admin.seasons.to"}}<input name="end" type="date" value="{{.End}}"></label></div>
@@ -309,7 +310,7 @@
 
 	<h3 class="section-title">{{t "admin.breaks.new"}}</h3>
 	<form method="post" action="/admin/uppehall" class="season-row">
-		<input type="hidden" name="back" value="/admin#uppehall">
+		<input type="hidden" name="flik" value="uppehall">
 		<div class="field"><label>{{t "admin.breaks.what"}}<input name="name" type="text" placeholder="{{t "admin.breaks.placeholder"}}" required></label></div>
 		<div class="field"><label>{{t "admin.seasons.from"}}<input name="start" type="date" required></label></div>
 		<div class="field">
@@ -326,7 +327,7 @@
 <section class="panel" id="installningar">
 	<div class="panel-head"><h2>{{t "admin.tab.settings"}}</h2></div>
 	<form method="post" action="/admin/installningar">
-		<input type="hidden" name="back" value="/admin#installningar">
+		<input type="hidden" name="flik" value="installningar">
 		<h3 class="section-title">{{t "admin.settings.deadline"}}</h3>
 		<p class="muted">{{t "admin.settings.deadline.body"}}</p>
 		<div class="field-grid">
