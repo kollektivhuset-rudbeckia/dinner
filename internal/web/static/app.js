@@ -317,6 +317,70 @@
 		field.addEventListener('blur', close);
 	});
 
+	// --- Dates ---------------------------------------------------------------
+	// A date is three selectors reading year-month-day; see datefield.go for
+	// why it is not an <input type="date">. Both jobs here are polish on top of
+	// something that already works: shortening the day list to the month that
+	// is chosen, and saying the date back in words. Without this the day list
+	// is simply always 31 long, and a 31st of February is refused on the way in
+	// rather than being unpickable.
+	document.querySelectorAll('[data-datefield]').forEach(function (field) {
+		var year = field.querySelector('[data-date="year"]');
+		var month = field.querySelector('[data-date="month"]');
+		var day = field.querySelector('[data-date="day"]');
+		var prose = field.querySelector('[data-date-prose]');
+		if (!year || !month || !day) { return; }
+
+		var months = (field.getAttribute('data-date-months') || '').split(',');
+
+		// daysIn is the length of the chosen month. With no year chosen yet,
+		// February is given 29 days: offering a day that turns out not to
+		// exist is recoverable, hiding one that does is not.
+		var daysIn = function () {
+			var m = parseInt(month.value, 10);
+			if (!m) { return 31; }
+			var y = parseInt(year.value, 10);
+			if (!y) { return m === 2 ? 29 : new Date(2024, m, 0).getDate(); }
+			// Day zero of the next month is the last day of this one.
+			return new Date(y, m, 0).getDate();
+		};
+
+		var trim = function () {
+			var limit = daysIn();
+			var chosen = parseInt(day.value, 10);
+			day.querySelectorAll('option').forEach(function (option) {
+				var n = parseInt(option.value, 10);
+				if (!n) { return; }
+				// Hidden as well as disabled: a disabled option is still
+				// listed, and a 30th of February should not be on the list at
+				// all.
+				option.hidden = n > limit;
+				option.disabled = n > limit;
+			});
+			// A day that has just stopped existing — the 31st, and then April
+			// — moves to the last day of the month rather than being silently
+			// dropped, which would submit a date nobody chose.
+			if (chosen > limit) { day.value = String(limit).padStart(2, '0'); }
+		};
+
+		var say = function () {
+			if (!prose) { return; }
+			var y = parseInt(year.value, 10);
+			var m = parseInt(month.value, 10);
+			var d = parseInt(day.value, 10);
+			if (!y || !m || !d || !months[m - 1]) { prose.textContent = ''; return; }
+			prose.textContent = d + ' ' + months[m - 1] + ' ' + y;
+		};
+
+		[year, month, day].forEach(function (part) {
+			part.addEventListener('change', function () {
+				trim();
+				say();
+			});
+		});
+		trim();
+	});
+
 	// --- Print button on the list -------------------------------------------
 	var print = document.querySelector('[data-print]');
 	if (print) {

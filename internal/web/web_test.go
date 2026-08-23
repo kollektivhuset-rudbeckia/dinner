@@ -18,6 +18,7 @@ import (
 	"github.com/O5ten/dinners/internal/auth"
 	"github.com/O5ten/dinners/internal/config"
 	"github.com/O5ten/dinners/internal/dinner"
+	"github.com/O5ten/dinners/internal/i18n"
 	"github.com/O5ten/dinners/internal/mattermost"
 	"github.com/O5ten/dinners/internal/store"
 )
@@ -2486,5 +2487,185 @@ func TestTheStandingFormSaysWhichEveningAChangeReaches(t *testing.T) {
 	// reaches the 27th.
 	if !strings.Contains(body, "27 augusti") {
 		t.Errorf("the standing form does not name the evening a change applies from:\n%s", body)
+	}
+}
+
+// --- picking a date ---------------------------------------------------------
+
+// <input type="date"> renders in the browser's own locale, which showed a
+// house that writes 2026-08-25 an American 08/25/2026 and asked it to type in
+// that order. A date is three selectors now, reading year-month-day, which
+// means the same thing in every browser.
+func TestADateIsThreeSelectorsInIsoOrder(t *testing.T) {
+	h := newHarness(t)
+	c := h.client(t)
+	c.login("adm")
+
+	body := c.get("/admin?flik=sasonger").Body.String()
+	if strings.Contains(body, `type="date"`) {
+		t.Error("a browser-formatted date input is still on the page")
+	}
+	for _, name := range []string{"start_year", "start_month", "start_day",
+		"end_year", "end_month", "end_day"} {
+		if !strings.Contains(body, `name="`+name+`"`) {
+			t.Errorf("no %s selector", name)
+		}
+	}
+	// The parts read in ISO order, which is the whole point.
+	y := strings.Index(body, `name="start_year"`)
+	m := strings.Index(body, `name="start_month"`)
+	d := strings.Index(body, `name="start_day"`)
+	if !(y < m && m < d) {
+		t.Errorf("the parts are not in year-month-day order: %d %d %d", y, m, d)
+	}
+}
+
+// A season posted as three parts is stored as the ISO date it spells.
+func TestASeasonSavesFromTheThreeSelectors(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	c := h.client(t)
+	c.login("adm")
+
+	rec := c.post("/admin/sasong", url.Values{
+		"flik": {"sasonger"}, "name": {"Våren 2027"},
+		"start_year": {"2027"}, "start_month": {"01"}, "start_day": {"05"},
+		"end_year": {"2027"}, "end_month": {"05"}, "end_day": {"25"},
+		"weekdays": {"2", "4"}, "rotation_offset": {"0"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("save = %d — %s", rec.Code, rec.Body.String())
+	}
+	seasons, _ := h.store.Seasons(ctx)
+	var got *store.Season
+	for i := range seasons {
+		if seasons[i].Name == "Våren 2027" {
+			got = &seasons[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("the season was not saved: %+v", seasons)
+	}
+	if got.Start != "2027-01-05" || got.End != "2027-05-25" {
+		t.Errorf("stored %s–%s, want 2027-01-05–2027-05-25", got.Start, got.End)
+	}
+}
+
+// The end of a break is optional and means "just that day". Three selectors
+// left unpicked have to keep meaning that.
+func TestABreakWithNoEndIsASingleDay(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	c := h.client(t)
+	c.login("adm")
+
+	rec := c.post("/admin/uppehall", url.Values{
+		"flik": {"uppehall"}, "name": {"Enstaka kväll"},
+		"start_year": {"2026"}, "start_month": {"09"}, "start_day": {"17"},
+		"end_year": {""}, "end_month": {""}, "end_day": {""},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("save = %d — %s", rec.Code, rec.Body.String())
+	}
+	breaks, _ := h.store.Breaks(ctx)
+	for _, b := range breaks {
+		if b.Name != "Enstaka kväll" {
+			continue
+		}
+		if b.Start != "2026-09-17" || b.End != "2026-09-17" {
+			t.Errorf("stored %s–%s, want both 2026-09-17", b.Start, b.End)
+		}
+		return
+	}
+	t.Errorf("the break was not saved: %+v", breaks)
+}
+
+// A date that does not exist is refused rather than rounded into a different
+// one. app.js takes the impossible days off the list, but nothing on the
+// server may depend on the browser having done so.
+func TestADateThatDoesNotExistIsRefused(t *testing.T) {
+	h := newHarness(t)
+	c := h.client(t)
+	c.login("adm")
+
+	rec := c.post("/admin/uppehall", url.Values{
+		"flik": {"uppehall"}, "name": {"Trettionde februari"},
+		"start_year": {"2026"}, "start_month": {"02"}, "start_day": {"30"},
+	})
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("the 30th of February was accepted: %d", rec.Code)
+	}
+}
+
+// A season whose year is outside the range the selectors normally offer must
+// still be editable: a field that cannot show its own value is a field that
+// silently changes it.
+func TestTheYearSelectorCanAlwaysShowTheYearItHolds(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if _, err := h.store.SaveSeason(ctx, store.Season{
+		Name: "Urtiden", Start: "2019-01-08", End: "2019-05-28",
+		Weekdays: []time.Weekday{time.Tuesday},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c := h.client(t)
+	c.login("adm")
+
+	body := c.get("/admin?flik=sasonger").Body.String()
+	if !strings.Contains(body, `<option value="2019" selected>2019</option>`) {
+		t.Error("2019 is not offered, so the old season cannot show its own year")
+	}
+}
+
+// --- reading a date back out ------------------------------------------------
+
+func TestFormDateAssemblesTheParts(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		form url.Values
+		want string
+	}{
+		{"the three parts", url.Values{
+			"d_year": {"2026"}, "d_month": {"08"}, "d_day": {"25"}}, "2026-08-25"},
+		{"unpadded parts are widened", url.Values{
+			"d_year": {"2026"}, "d_month": {"8"}, "d_day": {"5"}}, "2026-08-05"},
+		{"nothing picked is no date", url.Values{
+			"d_year": {""}, "d_month": {""}, "d_day": {""}}, ""},
+		{"no fields at all is no date", url.Values{}, ""},
+		// Half a date is passed on so that ParseDate is the one place that
+		// decides what a date is.
+		{"half a date is left to ParseDate", url.Values{
+			"d_year": {"2026"}, "d_month": {""}, "d_day": {"25"}}, "2026--25"},
+		// A whole field still works, for a script or an old bookmark.
+		{"a whole field wins", url.Values{
+			"d": {"2026-08-25"}, "d_year": {"1999"}}, "2026-08-25"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest("POST", "/", strings.NewReader(tc.form.Encode()))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			if got := formDate(r, "d"); got != tc.want {
+				t.Errorf("formDate = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestADateFieldSplitsWhatItIsGiven(t *testing.T) {
+	years := []int{2026}
+	set := newDateField(i18n.SV, "start", "2026-08-25", true, years)
+	if set.Year != "2026" || set.Month != "08" || set.Day != "25" {
+		t.Errorf("split into %q %q %q", set.Year, set.Month, set.Day)
+	}
+	// The date is said back in words, so that a reader can see 08 is August.
+	if set.Prose != "25 augusti 2026" {
+		t.Errorf("Prose = %q", set.Prose)
+	}
+	// Half a date in the database is not something to guess at.
+	for _, iso := range []string{"", "2026-08", "not a date", "2026-02-30"} {
+		f := newDateField(i18n.SV, "start", iso, true, years)
+		if f.Year != "" || f.Month != "" || f.Day != "" || f.Prose != "" {
+			t.Errorf("%q filled the selectors in: %+v", iso, f)
+		}
 	}
 }

@@ -150,6 +150,8 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request, v *view) {
 		"Rows":     rows,
 		"Standing": standing,
 		"Weekdays": allWeekdays(),
+		// The years the date selectors offer.
+		"Years":    yearOptions(world, v.Now),
 		"GuestURL": s.rt.BaseURL + "/gast",
 		"Saved":    r.URL.Query().Get("sparat"),
 		"ChatOn":   s.mm.Enabled(),
@@ -389,13 +391,13 @@ func (s *Server) handleAdminSeason(w http.ResponseWriter, r *http.Request, v *vi
 	}
 
 	loc := s.cfg.Location()
-	start, err := config.ParseDate(r.FormValue("start"), loc)
+	start, err := config.ParseDate(formDate(r, "start"), loc)
 	if err != nil {
 		s.errorPage(w, r, http.StatusUnprocessableEntity,
 			"error.startdate", "error.startdate.detail")
 		return
 	}
-	end, err := config.ParseDate(r.FormValue("end"), loc)
+	end, err := config.ParseDate(formDate(r, "end"), loc)
 	if err != nil {
 		s.errorPage(w, r, http.StatusUnprocessableEntity,
 			"error.enddate", "error.enddate.detail")
@@ -551,7 +553,8 @@ func (s *Server) handleAdminBreak(w http.ResponseWriter, r *http.Request, v *vie
 	}
 
 	loc := s.cfg.Location()
-	start, err := config.ParseDate(r.FormValue("start"), loc)
+	startRaw := formDate(r, "start")
+	start, err := config.ParseDate(startRaw, loc)
 	if err != nil {
 		s.errorPage(w, r, http.StatusUnprocessableEntity,
 			"error.startdate", "error.startdate.break")
@@ -559,9 +562,9 @@ func (s *Server) handleAdminBreak(w http.ResponseWriter, r *http.Request, v *vie
 	}
 	// A single day off is a break from and to the same date, so an empty end
 	// date means "just that day" rather than being an error.
-	endRaw := strings.TrimSpace(r.FormValue("end"))
+	endRaw := formDate(r, "end")
 	if endRaw == "" {
-		endRaw = r.FormValue("start")
+		endRaw = startRaw
 	}
 	end, err := config.ParseDate(endRaw, loc)
 	if err != nil {

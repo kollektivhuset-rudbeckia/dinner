@@ -233,8 +233,14 @@
 		<input type="hidden" name="id" value="{{.ID}}">
 		<input type="hidden" name="flik" value="sasonger">
 		<div class="field"><label>{{t "admin.seasons.name"}}<input name="name" type="text" value="{{.Name}}" required></label></div>
-		<div class="field"><label>{{t "admin.seasons.from"}}<input name="start" type="date" value="{{.Start}}" required></label></div>
-		<div class="field"><label>{{t "admin.seasons.to"}}<input name="end" type="date" value="{{.End}}" required></label></div>
+		<div class="field field-date">
+			<label>{{t "admin.seasons.from"}}</label>
+			{{template "datefield" datefield "start" .Start true $.Data.Years}}
+		</div>
+		<div class="field field-date">
+			<label>{{t "admin.seasons.to"}}</label>
+			{{template "datefield" datefield "end" .End true $.Data.Years}}
+		</div>
 		<fieldset class="weekdays">
 			<legend>{{t "admin.seasons.evenings"}}</legend>
 			{{$se := .}}
@@ -264,8 +270,14 @@
 	<form method="post" action="/admin/sasong" class="season-row">
 		<input type="hidden" name="flik" value="sasonger">
 		<div class="field"><label>{{t "admin.seasons.name"}}<input name="name" type="text" placeholder="{{t "admin.seasons.placeholder" .Now.Year}}" required></label></div>
-		<div class="field"><label>{{t "admin.seasons.from"}}<input name="start" type="date" required></label></div>
-		<div class="field"><label>{{t "admin.seasons.to"}}<input name="end" type="date" required></label></div>
+		<div class="field field-date">
+			<label>{{t "admin.seasons.from"}}</label>
+			{{template "datefield" datefield "start" "" true .Data.Years}}
+		</div>
+		<div class="field field-date">
+			<label>{{t "admin.seasons.to"}}</label>
+			{{template "datefield" datefield "end" "" true .Data.Years}}
+		</div>
 		<fieldset class="weekdays">
 			<legend>{{t "admin.seasons.evenings"}}</legend>
 			{{range .Data.Weekdays}}
@@ -296,8 +308,14 @@
 		<input type="hidden" name="id" value="{{.ID}}">
 		<input type="hidden" name="flik" value="uppehall">
 		<div class="field"><label>{{t "admin.breaks.what"}}<input name="name" type="text" value="{{.Name}}" required></label></div>
-		<div class="field"><label>{{t "admin.seasons.from"}}<input name="start" type="date" value="{{.Start}}" required></label></div>
-		<div class="field"><label>{{t "admin.seasons.to"}}<input name="end" type="date" value="{{.End}}"></label></div>
+		<div class="field field-date">
+			<label>{{t "admin.seasons.from"}}</label>
+			{{template "datefield" datefield "start" .Start true $.Data.Years}}
+		</div>
+		<div class="field field-date">
+			<label>{{t "admin.seasons.to"}}</label>
+			{{template "datefield" datefield "end" .End false $.Data.Years}}
+		</div>
 		<div class="team-actions">
 			<button type="submit" class="button small">Spara</button>
 			<button type="submit" class="button small ghost danger" name="action" value="delete"
@@ -312,9 +330,13 @@
 	<form method="post" action="/admin/uppehall" class="season-row">
 		<input type="hidden" name="flik" value="uppehall">
 		<div class="field"><label>{{t "admin.breaks.what"}}<input name="name" type="text" placeholder="{{t "admin.breaks.placeholder"}}" required></label></div>
-		<div class="field"><label>{{t "admin.seasons.from"}}<input name="start" type="date" required></label></div>
-		<div class="field">
-			<label>{{t "admin.seasons.to"}}<input name="end" type="date"></label>
+		<div class="field field-date">
+			<label>{{t "admin.seasons.from"}}</label>
+			{{template "datefield" datefield "start" "" true .Data.Years}}
+		</div>
+		<div class="field field-date">
+			<label>{{t "admin.seasons.to"}}</label>
+			{{template "datefield" datefield "end" "" false .Data.Years}}
 			<small class="hint">{{t "admin.breaks.single"}}</small>
 		</div>
 		<div class="team-actions"><button type="submit" class="button small primary">{{t "add"}}</button></div>

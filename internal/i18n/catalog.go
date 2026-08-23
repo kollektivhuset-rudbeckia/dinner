@@ -98,6 +98,15 @@ var catalog = map[string]entry{
 	"ident.forget":         {"Glöm mig och logga ut", "Forget me and log out"},
 	"ident.forget.confirm": {"Glömma dina uppgifter och logga ut?", "Forget your details and log out?"},
 
+	// --- picking a date ------------------------------------------------------
+	// The three parts of a date, named for a reader who cannot see the field's
+	// order. The dashes between them are decoration and are hidden.
+	"date.year":      {"År", "Year"},
+	"date.month":     {"Månad", "Month"},
+	"date.day":       {"Dag", "Day"},
+	"date.year.none": {"–––––", "–––––"},
+	"date.part.none": {"–––", "–––"},
+
 	// --- finding a person in the house's Mattermost --------------------------
 	"member.whose":            {"Välj vem i huset det gäller — sök på namn eller användarnamn.", "Choose who in the house you mean — search by name or username."},
 	"member.unreachable":      {"Kunde inte nå Mattermost just nu. Försök igen.", "Could not reach Mattermost right now. Try again."},

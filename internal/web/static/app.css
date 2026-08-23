@@ -469,6 +469,31 @@ label { font-size: .85rem; }
 /* Not somebody to pick: a reason there is nobody to pick. */
 .combo-note { padding: .4rem .55rem; color: var(--text-faint); font-size: .85rem; }
 
+/* A date, as three selectors reading year-month-day. The parts are sized to
+   their contents so the field reads as one date rather than three boxes, and
+   the numbers are tabular so the dashes line up down a column of them. */
+.datefield { display: flex; flex-direction: column; gap: .25rem; }
+/* The three parts never wrap: half a date on each of two lines reads as two
+   dates, and leaves a dash hanging at the end of the first. */
+.date-parts { display: flex; align-items: center; gap: .3rem; flex-wrap: nowrap; }
+.datefield .date-part {
+	width: auto; flex: 0 0 auto;
+	/* Its own padding, but the right side keeps the room every select needs
+	   for the arrow drawn in its background. */
+	padding: .55rem 1.7rem .55rem .5rem;
+	font-variant-numeric: tabular-nums;
+}
+.datefield .date-year { width: 5.4rem; }
+.datefield .date-part[data-date="month"], .datefield .date-part[data-date="day"] { width: 4.1rem; }
+.date-sep { color: var(--text-faint); }
+/* The date in words, under the selectors. It is a confirmation, not a control,
+   so it takes none of the attention, and it holds its line whether or not
+   there is a date yet, so that picking one does not shift the form. */
+.date-prose { color: var(--text-faint); font-size: .78rem; min-height: 1.1em; }
+/* A date needs more room than a name does, so it is given two of the row's
+   columns rather than being squeezed into one. */
+.field-date { grid-column: span 2; }
+
 /* Handing an evening to the calendar the household already keeps. */
 .calbuttons { display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
 .confirm-mark { color: var(--ok-text); margin-bottom: .75rem; }

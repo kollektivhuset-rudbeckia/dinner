@@ -424,6 +424,9 @@ func (s *Server) funcs(lang i18n.Lang) template.FuncMap {
 		"dict":      dict,
 		"hasPrefix": strings.HasPrefix,
 		"asset":     s.asset,
+		"datefield": func(name, iso string, required bool, years []int) dateField {
+			return newDateField(lang, name, iso, required, years)
+		},
 	}
 }
 
