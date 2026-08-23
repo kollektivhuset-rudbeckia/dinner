@@ -277,11 +277,16 @@ var catalog = map[string]entry{
 	"dinner.listlink":        {"Matlistan för matlaget →", "The cooking team's list →"},
 
 	// --- my registrations ----------------------------------------------------
-	"mine.title":                   {"Mina anmälningar", "My registrations"},
-	"mine.lede":                    {"Anmälan hör till @%s. Användarnamnet syns bara för dig och för matgruppen — aldrig för andra i huset.", "Registrations belong to @%s. Only you and the dinner group see the username — never anybody else in the house."},
-	"mine.changedetails":           {"Ändra mina uppgifter", "Change my details"},
-	"mine.saved":                   {"Sparat.", "Saved."},
-	"mine.standing":                {"Stående anmälan", "Standing registration"},
+	"mine.title":         {"Mina anmälningar", "My registrations"},
+	"mine.lede":          {"Anmälan hör till @%s. Användarnamnet syns bara för dig och för matgruppen — aldrig för andra i huset.", "Registrations belong to @%s. Only you and the dinner group see the username — never anybody else in the house."},
+	"mine.changedetails": {"Ändra mina uppgifter", "Change my details"},
+	"mine.saved":         {"Sparat.", "Saved."},
+	"mine.standing":      {"Stående anmälan", "Standing registration"},
+	// Which evening a change reaches. The ones before it have already gone to
+	// their matlag, so a household that saves after a deadline needs to know
+	// that this one is not the evening it changed.
+	"mine.standing.from":           {"Ändringar gäller från %s. Middagar vars anmälan redan stängt räknas som de skickades till matlaget.", "Changes apply from %s. Dinners whose registration has already closed are counted as they were sent to the cooking team."},
+	"mine.standing.from.none":      {"Det finns ingen middag kvar att ändra på den här veckodagen.", "There is no dinner left to change on this weekday."},
 	"mine.standing.body":           {"En stående anmälan betyder att ni räknas med varje gång, utan att ni behöver göra något. Ni kan alltid hoppa över en enskild kväll på den middagens sida — då gäller det bara den kvällen.", "A standing registration means you are counted in every time, without doing anything. You can always skip a single evening from that dinner's own page — that only affects that evening."},
 	"mine.standing.every":          {"Varje %s", "Every %s"},
 	"mine.standing.on":             {"✓ Påslagen", "✓ On"},
@@ -293,7 +298,7 @@ var catalog = map[string]entry{
 	"mine.standing.zero":           {"Noll personer betyder ingen stående anmälan alls.", "Zero people means no standing registration at all."},
 	"mine.standing.remove":         {"Ta bort stående anmälan", "Remove the standing registration"},
 	"mine.standing.remove.confirm": {"Ta bort den stående anmälan för %s? Ni räknas inte längre med automatiskt.", "Remove the standing registration for %s? You will no longer be counted in automatically."},
-	"mine.standing.remove.hint":    {"Ni försvinner ur kommande middagar som ni inte anmält er till för hand.", "You disappear from any coming dinner you have not registered for by hand."},
+	"mine.standing.remove.hint":    {"Ni försvinner ur kommande middagar som ni inte anmält er till för hand — utom de vars anmälan redan stängt, där matlaget redan har er på listan.", "You disappear from any coming dinner you have not registered for by hand — except those whose registration has already closed, where the cooking team already has you on the list."},
 	"mine.standing.noseason":       {"Ingen säsong är inlagd ännu, så det finns inga kvällar att stå på.", "No season has been set up yet, so there are no evenings to stand on."},
 	"mine.coming":                  {"Kommande middagar för er", "Your coming dinners"},
 	"mine.alldinners":              {"Alla middagar", "All dinners"},

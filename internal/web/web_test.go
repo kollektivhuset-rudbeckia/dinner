@@ -2284,3 +2284,207 @@ func TestEachAssetHasItsOwnVersion(t *testing.T) {
 		}
 	}
 }
+
+// --- the deadline, and the way round it -------------------------------------
+
+// openThursday is the next Thursday whose deadline has not passed: it closes
+// on Friday 21 August, the day after these tests think it is. laterDay is a
+// Tuesday, so a Thursday standing registration says nothing about it.
+const openThursday = "2026-08-27"
+
+// Registering for a single evening is refused once the deadline has passed.
+// Saving a standing registration for that weekday used to be a way straight
+// past it: the standing registrations are read live when a list is drawn up,
+// so a new one appeared on an evening the cooking team had already been given
+// and shopped for.
+func TestAStandingRegistrationCannotBeUsedToBeatTheDeadline(t *testing.T) {
+	h := newHarness(t)
+	c := h.client(t)
+	c.member("Anna Andersson", "anna.andersson")
+
+	// The direct road is shut, which is the behaviour the other one has to
+	// match.
+	if rec := c.post("/middag/"+shutDay, party(2, 0, store.DietOmnivore, "")); rec.Code == http.StatusSeeOther {
+		t.Fatal("registering for a closed evening was accepted")
+	}
+
+	// shutDay is a Thursday still to come whose deadline passed a week ago.
+	form := party(2, 0, store.DietOmnivore, "")
+	form.Set("weekday", itoa(int(time.Thursday)))
+	if rec := c.post("/stadigvarande", form); rec.Code != http.StatusSeeOther {
+		t.Fatalf("saving the standing registration = %d — %s", rec.Code, rec.Body.String())
+	}
+
+	if list := c.get("/middag/" + shutDay + "/lista").Body.String(); strings.Contains(list, "Anna") {
+		t.Errorf("a standing registration saved after the deadline reached %s's list", shutDay)
+	}
+
+	// It still does its job for the evenings it was in time for.
+	if list := c.get("/middag/" + openThursday + "/lista").Body.String(); !strings.Contains(list, "Anna") {
+		t.Errorf("the standing registration did not reach %s, which is still open", openThursday)
+	}
+}
+
+// The fix must not overshoot. A household that has been eating every Thursday
+// for a year is already on tonight's list; editing the standing registration
+// after tonight's deadline must not take them off it, because the cooking team
+// has already shopped for them.
+func TestEditingAStandingRegistrationLeavesAClosedEveningAsItWasSent(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	c := h.client(t)
+	c.member("Anna Andersson", "anna.andersson")
+
+	// In force since long before shutDay's deadline.
+	if err := h.store.SaveStanding(ctx, store.Standing{
+		ID: auth.ID(), Member: "anna.andersson", Weekday: time.Thursday,
+		Name: "Anna Andersson", Adults: 2, Diet: store.DietOmnivore,
+		UpdatedAt: testNow.AddDate(0, -6, 0),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := h.summary(ctx, mustDinner(t, h, shutDay))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.People != 2 {
+		t.Fatalf("the household was not counted on %s to begin with: %d", shutDay, before.People)
+	}
+
+	// Now change it, after that evening's deadline.
+	form := party(5, 0, store.DietVegan, "")
+	form.Set("weekday", itoa(int(time.Thursday)))
+	if rec := c.post("/stadigvarande", form); rec.Code != http.StatusSeeOther {
+		t.Fatalf("saving = %d — %s", rec.Code, rec.Body.String())
+	}
+
+	after, err := h.summary(ctx, mustDinner(t, h, shutDay))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.People != 2 {
+		t.Errorf("%s now counts %d people; it was sent with 2", shutDay, after.People)
+	}
+	if got := after.Count(store.DietVegan); got != 0 {
+		t.Errorf("%s picked up %d vegan portions from an edit made after its deadline", shutDay, got)
+	}
+
+	// The new numbers do apply to the evenings that are still open.
+	open, err := h.summary(ctx, mustDinner(t, h, openThursday))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if open.People != 5 {
+		t.Errorf("%s counts %d people, want the new 5", openThursday, open.People)
+	}
+}
+
+// Clearing a standing registration is the same story: it must not remove a
+// household from an evening it is already counted on.
+func TestClearingAStandingRegistrationLeavesAClosedEveningAlone(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	c := h.client(t)
+	c.member("Anna Andersson", "anna.andersson")
+
+	if err := h.store.SaveStanding(ctx, store.Standing{
+		ID: auth.ID(), Member: "anna.andersson", Weekday: time.Thursday,
+		Name: "Anna Andersson", Adults: 2, Diet: store.DietOmnivore,
+		UpdatedAt: testNow.AddDate(0, -6, 0),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	form := url.Values{"weekday": {itoa(int(time.Thursday))}, "action": {"clear"}}
+	if rec := c.post("/stadigvarande", form); rec.Code != http.StatusSeeOther {
+		t.Fatalf("clearing = %d — %s", rec.Code, rec.Body.String())
+	}
+
+	shut, err := h.summary(ctx, mustDinner(t, h, shutDay))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shut.People != 2 {
+		t.Errorf("%s counts %d people after the standing registration was cleared; "+
+			"the team was given 2", shutDay, shut.People)
+	}
+	// And it really is gone from the evenings still open.
+	open, err := h.summary(ctx, mustDinner(t, h, openThursday))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if open.People != 0 {
+		t.Errorf("%s still counts %d people", openThursday, open.People)
+	}
+}
+
+// An answer the household gave for the date itself is its own word on the
+// evening, and must survive an edit to the standing registration untouched.
+func TestAnAnswerForTheDateSurvivesAStandingEdit(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	c := h.client(t)
+	c.member("Anna Andersson", "anna.andersson")
+
+	if err := h.store.SaveStanding(ctx, store.Standing{
+		ID: auth.ID(), Member: "anna.andersson", Weekday: time.Thursday,
+		Name: "Anna Andersson", Adults: 2, Diet: store.DietOmnivore,
+		UpdatedAt: testNow.AddDate(0, -6, 0),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Before that Thursday shut, the household said it was skipping it.
+	if err := h.store.SaveRegistration(ctx, store.Registration{
+		ID: auth.ID(), Date: shutDay, Kind: store.KindMember,
+		Member: "anna.andersson", Name: "Anna Andersson",
+		Adults: 0, Children: 0, Diet: store.DietOmnivore,
+		CreatedAt: testNow.AddDate(0, 0, -14), UpdatedAt: testNow.AddDate(0, 0, -14),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	form := party(5, 0, store.DietOmnivore, "")
+	form.Set("weekday", itoa(int(time.Thursday)))
+	if rec := c.post("/stadigvarande", form); rec.Code != http.StatusSeeOther {
+		t.Fatalf("saving = %d", rec.Code)
+	}
+
+	sum, err := h.summary(ctx, mustDinner(t, h, shutDay))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.People != 0 {
+		t.Errorf("%s counts %d people; the household had said it was not coming",
+			shutDay, sum.People)
+	}
+}
+
+// mustDinner finds one evening in the generated schedule.
+func mustDinner(t *testing.T, h *harness, key string) dinner.Dinner {
+	t.Helper()
+	world, err := h.world(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, ok := world.Schedule.Find(key)
+	if !ok {
+		t.Fatalf("no dinner on %s", key)
+	}
+	return d
+}
+
+// A household that saves a standing registration after tonight's deadline is
+// not counted for tonight, and the page has to say which evening it does
+// reach — otherwise the rule just looks like the site ignoring them.
+func TestTheStandingFormSaysWhichEveningAChangeReaches(t *testing.T) {
+	h := newHarness(t)
+	c := h.client(t)
+	c.member("Anna Andersson", "anna.andersson")
+
+	body := c.get("/mina").Body.String()
+	// Thursday 20 August has closed, so a change to the Thursday default
+	// reaches the 27th.
+	if !strings.Contains(body, "27 augusti") {
+		t.Errorf("the standing form does not name the evening a change applies from:\n%s", body)
+	}
+}

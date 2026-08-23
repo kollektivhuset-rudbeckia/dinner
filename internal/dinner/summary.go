@@ -3,6 +3,7 @@ package dinner
 import (
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/O5ten/dinners/internal/store"
 )
@@ -96,7 +97,17 @@ func (s Summary) Count(d store.Diet) int {
 // A registration for the evening always wins over the household's standing
 // registration — including a registration for nobody, which is how a
 // household says it is skipping this one.
-func Resolve(regs []store.Registration, standing []store.Standing) Summary {
+//
+// closes is the evening's deadline, and a standing registration only counts
+// for an evening it was already in force for. Registering for a single evening
+// is refused once the deadline has passed, and a standing registration must
+// not be a way round that: one saved afterwards used to appear on a list the
+// cooking team had already been given and shopped for.
+//
+// The rule lives here rather than at the call sites because this is the one
+// place both of them go through, so it also holds for a standing registration
+// that reached the database by some other road.
+func Resolve(regs []store.Registration, standing []store.Standing, closes time.Time) Summary {
 	answered := make(map[string]bool, len(regs))
 	for _, r := range regs {
 		if r.Kind == store.KindMember && r.Member != "" {
@@ -141,6 +152,10 @@ func Resolve(regs []store.Registration, standing []store.Standing) Summary {
 	}
 	for _, st := range standing {
 		if answered[st.Member] {
+			continue
+		}
+		// Saved at or after the deadline: this evening was decided without it.
+		if !st.UpdatedAt.Before(closes) {
 			continue
 		}
 		add(Attendee{

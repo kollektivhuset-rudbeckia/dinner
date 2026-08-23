@@ -51,7 +51,7 @@ func (s *Server) summarize(ctx context.Context, dinners []dinner.Dinner) (map[st
 		byWeekday[st.Weekday] = append(byWeekday[st.Weekday], st)
 	}
 	for _, d := range dinners {
-		out[d.Key] = dinner.Resolve(byDate[d.Key], byWeekday[d.Weekday()])
+		out[d.Key] = dinner.Resolve(byDate[d.Key], byWeekday[d.Weekday()], d.Closes)
 	}
 	return out, nil
 }
@@ -66,7 +66,7 @@ func (s *Server) summary(ctx context.Context, d dinner.Dinner) (dinner.Summary, 
 	if err != nil {
 		return dinner.Summary{}, err
 	}
-	return dinner.Resolve(regs, standing), nil
+	return dinner.Resolve(regs, standing, d.Closes), nil
 }
 
 // row is one evening on the start page, together with what this household has

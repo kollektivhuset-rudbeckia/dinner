@@ -1,6 +1,8 @@
 package web
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -15,6 +17,12 @@ type standingRow struct {
 	Weekday time.Weekday
 	Form    regForm
 	Set     bool
+	// From is the first evening on this weekday a change would actually reach:
+	// the next one whose deadline has not passed. The evenings before it have
+	// been sent to their cooking teams and are not ours to rewrite, so saying
+	// which one this takes effect on is the difference between a rule and a
+	// page that quietly ignored you.
+	From time.Time
 }
 
 func (s *Server) handleMine(w http.ResponseWriter, r *http.Request, v *view) {
@@ -49,6 +57,7 @@ func (s *Server) handleMine(w http.ResponseWriter, r *http.Request, v *view) {
 				Adults: st.Adults, Children: st.Children,
 				Diet: st.Diet, Note: st.Note,
 			},
+			From: nextOpen(world, wd, v.Now),
 		})
 	}
 
@@ -75,6 +84,18 @@ func (s *Server) handleMine(w http.ResponseWriter, r *http.Request, v *view) {
 		"Saved":    r.URL.Query().Get("sparat") != "",
 	}
 	s.render(w, r, http.StatusOK, "mine.html", v)
+}
+
+// nextOpen is the first evening on one weekday that is still taking answers.
+// The zero time means there is no such evening in the schedule, which is what
+// a season that has run out looks like.
+func nextOpen(world *world, wd time.Weekday, now time.Time) time.Time {
+	for _, d := range world.Schedule.Dinners {
+		if d.Weekday() == wd && d.Open(now) {
+			return d.Date
+		}
+	}
+	return time.Time{}
 }
 
 // dinnerWeekdays is the union of the evenings every season uses, so the
@@ -130,6 +151,16 @@ func (s *Server) handleStanding(w http.ResponseWriter, r *http.Request, v *view)
 			i18n.T(v.Lang, "error.standing"), problem)
 		return
 	}
+	// The evenings whose deadline has already passed keep what they were
+	// counted with, before the new values take over. Without this, the rule in
+	// dinner.Resolve would cut the old standing registration off those
+	// evenings too, and a household that has eaten every Thursday for a year
+	// would vanish from tonight's list by editing next month's.
+	if err := s.keepClosedEvenings(ctx, r, v, wd); err != nil {
+		s.fail(w, r, "keep the closed evenings as they were sent", err)
+		return
+	}
+
 	err = s.store.SaveStanding(ctx, store.Standing{
 		ID:        auth.ID(),
 		Member:    v.Ident.MMUsername,
@@ -149,4 +180,81 @@ func (s *Server) handleStanding(w http.ResponseWriter, r *http.Request, v *view)
 	}
 	s.log.Info("standing registration saved", "weekday", wd.String(), "people", form.Adults+form.Children)
 	http.Redirect(w, r, "/mina?sparat=1", http.StatusSeeOther)
+}
+
+// keepClosedEvenings writes the household's standing registration down as an
+// answer for each evening on this weekday whose deadline has passed but which
+// is still to come — the evenings the cooking team is already shopping for.
+//
+// A standing registration is read live, at the moment a list is drawn up, so
+// on its own it is not a record of anything: changing it changes what those
+// evenings say, and clearing it takes the household off a list it is already
+// counted on. An answer for the date always wins over a standing
+// registration, so writing one down freezes those evenings exactly as they
+// were sent, and leaves the new values to the evenings still open.
+func (s *Server) keepClosedEvenings(ctx context.Context, r *http.Request, v *view, wd time.Weekday) error {
+	existing, err := s.store.StandingByMember(ctx, v.Ident.MMUsername)
+	if err != nil {
+		return err
+	}
+	var was *store.Standing
+	for i := range existing {
+		if existing[i].Weekday == wd {
+			was = &existing[i]
+		}
+	}
+	if was == nil {
+		// Nothing was in force on this weekday, so no closed evening is
+		// counting on anything. This is the case the deadline was being got
+		// round: a brand new standing registration, which dinner.Resolve now
+		// keeps off the evenings it was too late for.
+		return nil
+	}
+
+	world, err := s.world(ctx)
+	if err != nil {
+		return err
+	}
+	now := s.now()
+	for _, d := range world.Schedule.Dinners {
+		if d.Weekday() != wd || !d.Closed(now) {
+			continue
+		}
+		// The old standing registration has to have been in force for this
+		// evening in the first place; if it was saved after this deadline too,
+		// it was never counted and there is nothing to keep.
+		if !was.UpdatedAt.Before(d.Closes) {
+			continue
+		}
+		// An answer already given for the date is the household's own word on
+		// the evening, and outranks anything derived from a standing one.
+		if _, err := s.store.MemberRegistration(ctx, d.Key, was.Member); err == nil {
+			continue
+		} else if !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+		err = s.store.SaveRegistration(ctx, store.Registration{
+			ID:        auth.ID(),
+			Date:      d.Key,
+			Kind:      store.KindMember,
+			Member:    was.Member,
+			MMUserID:  was.MMUserID,
+			Name:      was.Name,
+			Apartment: was.Apartment,
+			Adults:    was.Adults,
+			Children:  was.Children,
+			Diet:      was.Diet,
+			Note:      was.Note,
+			Token:     auth.Token(),
+			CreatedAt: now, UpdatedAt: now,
+			CreatedIP: s.clientIP(r),
+		})
+		if err != nil {
+			return err
+		}
+		s.log.Info("kept a closed evening as the cooking team was given it",
+			"date", d.Key, "member", was.Member,
+			"people", was.Adults+was.Children)
+	}
+	return nil
 }
