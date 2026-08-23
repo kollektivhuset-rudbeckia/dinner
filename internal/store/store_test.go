@@ -20,12 +20,13 @@ func open(t *testing.T) *Store {
 
 var now = time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
 
-func reg(date, email, name string, adults, children int) Registration {
+func reg(date, username, name string, adults, children int) Registration {
 	return Registration{
-		ID: "id-" + email + "-" + date, Date: date, Kind: KindMember,
-		Email: email, Name: name, Adults: adults, Children: children,
+		ID: "id-" + username + "-" + date, Date: date, Kind: KindMember,
+		Member: username, MMUserID: "u-" + username,
+		Name: name, Adults: adults, Children: children,
 		Diet:  DietOmnivore,
-		Token: "tok-" + email + "-" + date, CreatedAt: now, UpdatedAt: now,
+		Token: "tok-" + username + "-" + date, CreatedAt: now, UpdatedAt: now,
 	}
 }
 
@@ -80,11 +81,11 @@ func TestMemberRegistrationIsReplacedNotDuplicated(t *testing.T) {
 	st := open(t)
 	ctx := context.Background()
 
-	first := reg("2026-08-25", "anna@x.se", "Anna", 2, 1)
+	first := reg("2026-08-25", "anna", "Anna", 2, 1)
 	if err := st.SaveRegistration(ctx, first); err != nil {
 		t.Fatal(err)
 	}
-	second := reg("2026-08-25", "anna@x.se", "Anna Andersson", 1, 0)
+	second := reg("2026-08-25", "anna", "Anna Andersson", 1, 0)
 	second.ID = "a-completely-different-id"
 	second.UpdatedAt = now.Add(time.Hour)
 	if err := st.SaveRegistration(ctx, second); err != nil {
@@ -114,14 +115,14 @@ func TestMemberRegistrationIsReplacedNotDuplicated(t *testing.T) {
 	}
 }
 
-// Two visitors may share an address, or leave it out; neither may collide.
+// Two visitors are always two rows: they have no account here to be one by.
 func TestGuestRegistrationsAreAlwaysSeparateRows(t *testing.T) {
 	st := open(t)
 	ctx := context.Background()
 	for i, name := range []string{"Kalle", "Maja"} {
 		r := Registration{
 			ID: "g" + string(rune('0'+i)), Date: "2026-08-25", Kind: KindGuest,
-			Name: name, Email: "", Adults: 1, Diet: DietOmnivore,
+			Name: name, Adults: 1, Diet: DietOmnivore,
 			Token: "t" + string(rune('0'+i)), CreatedAt: now, UpdatedAt: now,
 		}
 		if err := st.SaveRegistration(ctx, r); err != nil {
@@ -162,20 +163,20 @@ func TestMemberRegistrationLookupAndRange(t *testing.T) {
 	st := open(t)
 	ctx := context.Background()
 	for _, r := range []Registration{
-		reg("2026-08-25", "anna@x.se", "Anna", 2, 0),
-		reg("2026-08-27", "anna@x.se", "Anna", 1, 0),
-		reg("2026-09-01", "bo@x.se", "Bo", 1, 0),
+		reg("2026-08-25", "anna", "Anna", 2, 0),
+		reg("2026-08-27", "anna", "Anna", 1, 0),
+		reg("2026-09-01", "bo", "Bo", 1, 0),
 	} {
 		if err := st.SaveRegistration(ctx, r); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	got, err := st.MemberRegistration(ctx, "2026-08-27", "anna@x.se")
+	got, err := st.MemberRegistration(ctx, "2026-08-27", "anna")
 	if err != nil || got.Adults != 1 {
 		t.Errorf("MemberRegistration = %+v, %v", got, err)
 	}
-	if _, err := st.MemberRegistration(ctx, "2026-08-27", "bo@x.se"); err != ErrNotFound {
+	if _, err := st.MemberRegistration(ctx, "2026-08-27", "bo"); err != ErrNotFound {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 
@@ -187,7 +188,7 @@ func TestMemberRegistrationLookupAndRange(t *testing.T) {
 		t.Errorf("got %d in range, want 2", len(between))
 	}
 
-	mine, err := st.MemberRegistrations(ctx, "anna@x.se", "2026-08-26")
+	mine, err := st.MemberRegistrations(ctx, "anna", "2026-08-26")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +200,7 @@ func TestMemberRegistrationLookupAndRange(t *testing.T) {
 func TestDeleteRegistration(t *testing.T) {
 	st := open(t)
 	ctx := context.Background()
-	r := reg("2026-08-25", "anna@x.se", "Anna", 1, 0)
+	r := reg("2026-08-25", "anna", "Anna", 1, 0)
 	if err := st.SaveRegistration(ctx, r); err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +215,7 @@ func TestDeleteRegistration(t *testing.T) {
 func TestStandingUpsertAndClear(t *testing.T) {
 	st := open(t)
 	ctx := context.Background()
-	base := Standing{ID: "s1", Email: "anna@x.se", Weekday: time.Tuesday,
+	base := Standing{ID: "s1", Member: "anna.andersson", Weekday: time.Tuesday,
 		Name: "Anna", Adults: 2, Children: 1, Diet: DietVegetarian, UpdatedAt: now}
 	if err := st.SaveStanding(ctx, base); err != nil {
 		t.Fatal(err)
@@ -225,7 +226,7 @@ func TestStandingUpsertAndClear(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	list, err := st.StandingByEmail(ctx, "anna@x.se")
+	list, err := st.StandingByMember(ctx, "anna.andersson")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +243,7 @@ func TestStandingUpsertAndClear(t *testing.T) {
 	if err := st.SaveStanding(ctx, empty); err != nil {
 		t.Fatal(err)
 	}
-	if list, _ := st.StandingByEmail(ctx, "anna@x.se"); len(list) != 0 {
+	if list, _ := st.StandingByMember(ctx, "anna.andersson"); len(list) != 0 {
 		t.Errorf("saving nobody should have cleared it, got %+v", list)
 	}
 }
@@ -252,13 +253,13 @@ func TestStandingIsPerWeekday(t *testing.T) {
 	ctx := context.Background()
 	for _, wd := range []time.Weekday{time.Tuesday, time.Thursday} {
 		if err := st.SaveStanding(ctx, Standing{
-			ID: "s" + wd.String(), Email: "anna@x.se", Weekday: wd,
+			ID: "s" + wd.String(), Member: "anna.andersson", Weekday: wd,
 			Name: "Anna", Adults: 1, Diet: DietOmnivore, UpdatedAt: now,
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if list, _ := st.StandingByEmail(ctx, "anna@x.se"); len(list) != 2 {
+	if list, _ := st.StandingByMember(ctx, "anna.andersson"); len(list) != 2 {
 		t.Errorf("got %d rows, want one per weekday", len(list))
 	}
 	tue, err := st.StandingFor(ctx, time.Tuesday)
@@ -268,10 +269,10 @@ func TestStandingIsPerWeekday(t *testing.T) {
 	if len(tue) != 1 {
 		t.Errorf("StandingFor(Tuesday) = %d rows, want 1", len(tue))
 	}
-	if err := st.DeleteStanding(ctx, "anna@x.se", time.Tuesday); err != nil {
+	if err := st.DeleteStanding(ctx, "anna.andersson", time.Tuesday); err != nil {
 		t.Fatal(err)
 	}
-	if list, _ := st.StandingByEmail(ctx, "anna@x.se"); len(list) != 1 {
+	if list, _ := st.StandingByMember(ctx, "anna.andersson"); len(list) != 1 {
 		t.Errorf("after deleting Tuesday: %+v", list)
 	}
 }
@@ -561,13 +562,13 @@ func TestNotificationsAreRecordedOnce(t *testing.T) {
 	if done, _ := st.Notified(ctx, "2026-08-25", "deadline"); done {
 		t.Fatal("nothing sent yet")
 	}
-	if err := st.MarkNotified(ctx, "2026-08-25", "deadline", "anna@x.se", now); err != nil {
+	if err := st.MarkNotified(ctx, "2026-08-25", "deadline", "anna", now); err != nil {
 		t.Fatal(err)
 	}
 	if done, _ := st.Notified(ctx, "2026-08-25", "deadline"); !done {
 		t.Error("should be recorded")
 	}
-	if err := st.MarkNotified(ctx, "2026-08-25", "deadline", "bo@x.se", now); err == nil {
+	if err := st.MarkNotified(ctx, "2026-08-25", "deadline", "bo", now); err == nil {
 		t.Error("a second record for the same dinner must be refused")
 	}
 
@@ -576,7 +577,7 @@ func TestNotificationsAreRecordedOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	log, ok := sent["2026-08-25"]
-	if !ok || !log.SentAt.Equal(now) || log.Recipient != "anna@x.se" {
+	if !ok || !log.SentAt.Equal(now) || log.Recipient != "anna" {
 		t.Errorf("SentNotifications = %+v", sent)
 	}
 
@@ -635,12 +636,12 @@ func TestSeasonOverlap(t *testing.T) {
 func TestDietRoundTripsAndDefaultsSafely(t *testing.T) {
 	st := open(t)
 	ctx := context.Background()
-	r := reg("2026-08-25", "anna@x.se", "Anna", 2, 0)
+	r := reg("2026-08-25", "anna", "Anna", 2, 0)
 	r.Diet = DietFlexitarian
 	if err := st.SaveRegistration(ctx, r); err != nil {
 		t.Fatal(err)
 	}
-	got, err := st.MemberRegistration(ctx, "2026-08-25", "anna@x.se")
+	got, err := st.MemberRegistration(ctx, "2026-08-25", "anna")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -686,7 +687,8 @@ func TestParseDiet(t *testing.T) {
 }
 
 // A database written by the two-counts build has to come across without losing
-// anyone's meal.
+// anyone's meal. The evenings in it are long past, so they are history the
+// switch to Mattermost accounts leaves alone.
 func TestMigrationFromTheOldDietCounts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "old.db")
 	old, err := sql.Open("sqlite", path)
@@ -713,11 +715,11 @@ func TestMigrationFromTheOldDietCounts(t *testing.T) {
 			note TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
 		);
 		INSERT INTO registrations (id, date, email, name, adults, children, vegans, vegetarians, created_at, updated_at)
-		VALUES ('r1', '2026-08-25', 'a@x.se', 'Allätarna', 2, 1, 0, 0, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z'),
-		       ('r2', '2026-08-25', 'b@x.se', 'Veganen',   1, 0, 1, 0, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z'),
-		       ('r3', '2026-08-25', 'c@x.se', 'Blandat',   2, 1, 0, 2, '2026-08-01T10:00:00Z', '2026-08-01T10:00:00Z');
+		VALUES ('r1', '2020-09-15', 'a@x.se', 'Allätarna', 2, 1, 0, 0, '2020-09-01T10:00:00Z', '2020-09-01T10:00:00Z'),
+		       ('r2', '2020-09-15', 'b@x.se', 'Veganen',   1, 0, 1, 0, '2020-09-01T10:00:00Z', '2020-09-01T10:00:00Z'),
+		       ('r3', '2020-09-15', 'c@x.se', 'Blandat',   2, 1, 0, 2, '2020-09-01T10:00:00Z', '2020-09-01T10:00:00Z');
 		INSERT INTO standing (id, email, weekday, name, adults, vegans, vegetarians, updated_at)
-		VALUES ('s1', 'greta@x.se', 2, 'Greta', 1, 1, 0, '2026-08-01T10:00:00Z');
+		VALUES ('s1', 'greta@x.se', 2, 'Greta', 1, 1, 0, '2020-09-01T10:00:00Z');
 	`); err != nil {
 		t.Fatal(err)
 	}
@@ -731,7 +733,7 @@ func TestMigrationFromTheOldDietCounts(t *testing.T) {
 
 	ctx := context.Background()
 	byName := map[string]Diet{}
-	regs, err := st.Registrations(ctx, "2026-08-25")
+	regs, err := st.Registrations(ctx, "2020-09-15")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -750,12 +752,11 @@ func TestMigrationFromTheOldDietCounts(t *testing.T) {
 			t.Errorf("%s migrated to %q, want %q", name, byName[name], diet)
 		}
 	}
-	standing, err := st.StandingByEmail(ctx, "greta@x.se")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(standing) != 1 || standing[0].Diet != DietVegan {
-		t.Errorf("standing migrated to %+v", standing)
+	// The standing registration is gone rather than migrated: it was keyed by
+	// an address, and a standing registration with no household behind it
+	// would go on adding Greta to every Tuesday with nobody able to stop it.
+	if all, _ := st.AllStanding(ctx); len(all) != 0 {
+		t.Errorf("standing registrations survived the switch: %+v", all)
 	}
 
 	// Opening it again must be a no-op rather than a re-migration.
@@ -765,8 +766,110 @@ func TestMigrationFromTheOldDietCounts(t *testing.T) {
 		t.Fatalf("reopening: %v", err)
 	}
 	defer again.Close()
-	if regs, _ := again.Registrations(ctx, "2026-08-25"); len(regs) != 3 {
+	if regs, _ := again.Registrations(ctx, "2020-09-15"); len(regs) != 3 {
 		t.Errorf("got %d registrations after reopening", len(regs))
+	}
+}
+
+// A database from the version that identified a household by its e-mail
+// address. There is no way to turn an address into a Mattermost account, so the
+// upgrade keeps the evenings already served and clears what would otherwise be
+// counted by nobody.
+func TestMigrationFromTheHouseholdAddresses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	old, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().AddDate(0, 0, -14).Format("2006-01-02")
+	future := time.Now().AddDate(0, 0, 14).Format("2006-01-02")
+	if _, err := old.Exec(`
+		CREATE TABLE registrations (
+			id TEXT PRIMARY KEY, date TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'member',
+			email TEXT NOT NULL DEFAULT '', name TEXT NOT NULL,
+			apartment TEXT NOT NULL DEFAULT '', host TEXT NOT NULL DEFAULT '',
+			adults INTEGER NOT NULL DEFAULT 0, children INTEGER NOT NULL DEFAULT 0,
+			diet TEXT NOT NULL DEFAULT 'allatare',
+			note TEXT NOT NULL DEFAULT '', token TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+			created_ip TEXT NOT NULL DEFAULT ''
+		);
+		CREATE UNIQUE INDEX idx_reg_member ON registrations (date, email) WHERE kind = 'member';
+		CREATE TABLE standing (
+			id TEXT PRIMARY KEY, email TEXT NOT NULL, weekday INTEGER NOT NULL,
+			name TEXT NOT NULL, apartment TEXT NOT NULL DEFAULT '',
+			adults INTEGER NOT NULL DEFAULT 0, children INTEGER NOT NULL DEFAULT 0,
+			diet TEXT NOT NULL DEFAULT 'allatare',
+			note TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
+		);
+		CREATE UNIQUE INDEX idx_standing ON standing (email, weekday);
+		INSERT INTO registrations (id, date, kind, email, name, adults, created_at, updated_at)
+		VALUES ('served', '` + past + `',   'member', 'anna@x.se', 'Anna',  2, '2020-01-01T10:00:00Z', '2020-01-01T10:00:00Z'),
+		       ('coming', '` + future + `', 'member', 'anna@x.se', 'Anna',  2, '2020-01-01T10:00:00Z', '2020-01-01T10:00:00Z'),
+		       ('visitor','` + future + `', 'guest',  '',          'Kalle', 1, '2020-01-01T10:00:00Z', '2020-01-01T10:00:00Z');
+		INSERT INTO standing (id, email, weekday, name, adults, updated_at)
+		VALUES ('s1', 'anna@x.se', 2, 'Anna', 2, '2020-01-01T10:00:00Z');
+	`); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("opening an old database: %v", err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+
+	// The evening already served is the house's history and stays exactly as
+	// it was, list and all — only without a household to edit it by.
+	served, _ := st.Registrations(ctx, past)
+	if len(served) != 1 || served[0].Name != "Anna" {
+		t.Errorf("the served evening should be untouched, got %+v", served)
+	}
+	if served[0].Member != "" {
+		t.Errorf("Member = %q, want empty: there was nothing to fill it from", served[0].Member)
+	}
+
+	// The evening still to come is cleared, so that Anna registering again is
+	// one household rather than two. The guest keeps their row: they were never
+	// identified by an address in the first place.
+	coming, _ := st.Registrations(ctx, future)
+	if len(coming) != 1 || coming[0].Kind != KindGuest {
+		t.Errorf("the coming evening should hold only the guest, got %+v", coming)
+	}
+	if all, _ := st.AllStanding(ctx); len(all) != 0 {
+		t.Errorf("standing registrations survived: %+v", all)
+	}
+
+	// And the address itself is gone from both tables.
+	for _, table := range []string{"registrations", "standing"} {
+		var n int
+		if err := st.db.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'email'`, table).
+			Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 0 {
+			t.Errorf("%s still has an email column", table)
+		}
+	}
+
+	// Anna registers again, by account this time, and is one household.
+	if err := st.SaveRegistration(ctx, reg(future, "anna.andersson", "Anna", 2, 0)); err != nil {
+		t.Fatal(err)
+	}
+	again := reg(future, "anna.andersson", "Anna", 3, 0)
+	again.ID = "another"
+	if err := st.SaveRegistration(ctx, again); err != nil {
+		t.Fatal(err)
+	}
+	mine, err := st.MemberRegistration(ctx, future, "anna.andersson")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mine.Adults != 3 {
+		t.Errorf("Adults = %d, want the second answer to have replaced the first", mine.Adults)
 	}
 }
 

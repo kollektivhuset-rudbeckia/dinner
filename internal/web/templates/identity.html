@@ -6,15 +6,25 @@
 		{{with .Data.Error}}<p class="alert alert-error" role="alert">{{.}}</p>{{end}}
 		<form method="post" action="/jagar" class="stack">
 			<input type="hidden" name="next" value="{{.Data.Next}}">
-			<label for="name">{{t "ident.name"}}</label>
-			<input id="name" name="name" type="text" required autocomplete="name"
-			       autofocus value="{{.Data.Form.Name}}" placeholder="Anna Andersson">
+			{{/* The account is picked rather than typed: app.js turns this into
+			     a list of the house's own people. Without JavaScript, or
+			     without a chat server, it stays a box that takes a username. */}}
+			<label for="member">{{t "ident.member"}}</label>
+			{{template "memberfield" dict
+				"ID" "member" "Name" "member" "Value" .Data.Form.MMUsername
+				"NameField" "#name" "Required" true "Autofocus" true}}
+			<small class="hint">
+				{{if .ChatOn}}{{t "ident.member.hint"}}{{else}}{{t "ident.member.nochat"}}{{end}}
+			</small>
+
+			<label for="name">{{t "ident.name"}} <small class="muted">{{t "optional"}}</small></label>
+			<input id="name" name="name" type="text" autocomplete="name"
+			       value="{{.Data.Form.Name}}" placeholder="Anna Andersson">
+			<small class="hint">{{t "ident.name.hint"}}</small>
+
 			<label for="apartment">{{t "ident.apartment"}} <small class="muted">{{t "optional"}}</small></label>
 			<input id="apartment" name="apartment" type="text" autocomplete="off"
 			       value="{{.Data.Form.Apartment}}" placeholder="1403">
-			<label for="email">{{t "ident.email"}}</label>
-			<input id="email" name="email" type="email" required autocomplete="email"
-			       value="{{.Data.Form.Email}}" placeholder="anna@example.se">
 			<button type="submit" class="button primary">{{t "ident.submit"}}</button>
 		</form>
 		{{if .Data.Known}}

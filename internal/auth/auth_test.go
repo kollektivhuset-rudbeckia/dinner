@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -117,7 +118,8 @@ func TestAdminSessionDiesWithTheAdminPassword(t *testing.T) {
 
 func TestIdentityRoundTrip(t *testing.T) {
 	g := guard()
-	id := Identity{Name: "Anna Andersson", Apartment: "1403", Email: "anna@example.se"}
+	id := Identity{Name: "Anna Andersson", Apartment: "1403",
+		MMUsername: "anna.andersson", MMUserID: "u-anna"}
 	rec := httptest.NewRecorder()
 	g.Remember(rec, id)
 	r := httptest.NewRequest("GET", "/", nil)
@@ -132,18 +134,21 @@ func TestIdentityRoundTrip(t *testing.T) {
 		t.Error("Known should be true")
 	}
 	if (Identity{Name: "Anna"}).Known() {
-		t.Error("a name without an address is not enough to register")
+		t.Error("a name without an account is not enough to register")
+	}
+	if (Identity{MMUsername: "anna.andersson"}).Known() {
+		t.Error("an account with no name is not enough either")
 	}
 	if (Identity{}).Known() {
 		t.Error("an empty identity is not known")
 	}
 }
 
-// Names and addresses contain separators and non-ASCII; the encoding must
-// survive them.
+// Names contain separators and non-ASCII; the encoding must survive them.
 func TestIdentitySurvivesAwkwardValues(t *testing.T) {
 	g := guard()
-	id := Identity{Name: "Åsa ~ Öberg-Näs", Apartment: "1.2~3", Email: "asa+mat@öexample.se"}
+	id := Identity{Name: "Åsa ~ Öberg-Näs", Apartment: "1.2~3",
+		MMUsername: "asa.oberg-nas", MMUserID: "u~1.2"}
 	rec := httptest.NewRecorder()
 	g.Remember(rec, id)
 	r := httptest.NewRequest("GET", "/", nil)
@@ -155,7 +160,25 @@ func TestIdentitySurvivesAwkwardValues(t *testing.T) {
 	}
 }
 
-// The link mailed to a cooking-team leader opens exactly one evening's list.
+// A cookie from the version that identified households by e-mail address had
+// three parts where there are now four. It must be forgotten outright: reading
+// the address as a username would tie the household to an account that is not
+// theirs.
+func TestAnIdentityFromTheEmailEraIsForgotten(t *testing.T) {
+	g := guard()
+	raw := strings.Join([]string{
+		base64.RawURLEncoding.EncodeToString([]byte("Anna Andersson")),
+		base64.RawURLEncoding.EncodeToString([]byte("1403")),
+		base64.RawURLEncoding.EncodeToString([]byte("anna@example.se")),
+	}, "~")
+	r := httptest.NewRequest("GET", "/", nil)
+	r.AddCookie(&http.Cookie{Name: identCookie, Value: g.sign(raw, time.Now().Add(time.Hour))})
+	if got := g.Identity(r); got.Known() || got != (Identity{}) {
+		t.Errorf("Identity = %+v, want an empty one", got)
+	}
+}
+
+// The link sent to a cooking-team leader opens exactly one evening's list.
 func TestCapabilityKeyIsBoundToItsSubject(t *testing.T) {
 	g := guard()
 	key := g.Key("lista", "2026-08-25", time.Hour)
@@ -191,35 +214,6 @@ func TestCapabilityKeyFromAnotherSecretIsRejected(t *testing.T) {
 	key := stranger.Key("lista", "2026-08-25", time.Hour)
 	if guard().CheckKey("lista", "2026-08-25", key) {
 		t.Error("a key signed elsewhere must not be accepted")
-	}
-}
-
-func TestValidEmail(t *testing.T) {
-	good := []string{"anna@example.se", "a.b+mat@sub.example.co.uk", "x@y.zz"}
-	for _, s := range good {
-		if !ValidEmail(s) {
-			t.Errorf("ValidEmail(%q) = false, want true", s)
-		}
-	}
-	bad := []string{
-		"", "anna", "anna@", "@example.se",
-		"anna@localhost",              // no dot: not deliverable off the machine
-		"Anna <anna@example.se>",      // a display name is not an address
-		"anna@example.se, bo@x.se",    // two addresses
-		"anna@example.se\nBcc: x@y.z", // header injection
-		"anna @example.se",
-		strings.Repeat("a", 250) + "@example.se",
-	}
-	for _, s := range bad {
-		if ValidEmail(s) {
-			t.Errorf("ValidEmail(%q) = true, want false", s)
-		}
-	}
-}
-
-func TestNormalizeEmail(t *testing.T) {
-	if got := NormalizeEmail("  Anna@Example.SE \n"); got != "anna@example.se" {
-		t.Errorf("NormalizeEmail = %q", got)
 	}
 }
 

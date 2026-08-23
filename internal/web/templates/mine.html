@@ -2,7 +2,7 @@
 <div class="hero">
 	<h1>{{t "mine.title"}}</h1>
 	<p class="lede">
-		{{t "mine.lede" .Ident.Email}}
+		{{t "mine.lede" .Ident.MMUsername}}
 		<a href="/jagar">{{t "mine.changedetails"}}</a>
 	</p>
 </div>
@@ -38,6 +38,10 @@
 					<input type="hidden" name="weekday" value="{{printf "%d" .Weekday}}">
 					{{template "countfields" dict "Form" .Form "ID" (printf "st%d" .Weekday)
 						"Zero" (t "mine.standing.zero") "Split" (t "form.split.household")}}
+					<p class="hint">
+						{{if .From.IsZero}}{{t "mine.standing.from.none"}}
+						{{else}}{{t "mine.standing.from" (dateLong .From)}}{{end}}
+					</p>
 					<div class="form-actions">
 						<button type="submit" class="button primary">
 							{{if .Set}}{{t "mine.standing.savechange"}}{{else}}{{t "mine.standing.turnon"}}{{end}}

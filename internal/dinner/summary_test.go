@@ -7,10 +7,10 @@ import (
 	"github.com/O5ten/dinners/internal/store"
 )
 
-func member(email, name string, adults, children int, diet store.Diet, note string) store.Registration {
+func member(username, name string, adults, children int, diet store.Diet, note string) store.Registration {
 	return store.Registration{
-		ID: "r-" + email, Date: "2026-08-25", Kind: store.KindMember,
-		Email: email, Name: name, Adults: adults, Children: children,
+		ID: "r-" + username, Date: "2026-08-25", Kind: store.KindMember,
+		Member: username, Name: name, Adults: adults, Children: children,
 		Diet: diet, Note: note,
 	}
 }
@@ -23,22 +23,35 @@ func guest(name, host string, adults, children int, diet store.Diet, note string
 	}
 }
 
-func standing(email, name string, adults, children int, diet store.Diet) store.Standing {
+func standing(username, name string, adults, children int, diet store.Diet) store.Standing {
 	return store.Standing{
-		ID: "s-" + email, Email: email, Weekday: time.Tuesday, Name: name,
+		ID: "s-" + username, Member: username, Weekday: time.Tuesday, Name: name,
 		Adults: adults, Children: children, Diet: diet,
+		// Long in force, which is the uninteresting case for the arithmetic.
+		UpdatedAt: testCloses.AddDate(0, -1, 0),
 	}
 }
 
+// testCloses is the deadline of the evening these tests resolve: the Friday
+// before the Tuesday the registrations above are for.
+var testCloses = time.Date(2026, 8, 21, 23, 59, 0, 0, time.UTC)
+
+// resolve is Resolve with that deadline filled in. Most of these tests are
+// about the arithmetic rather than about who was in time, and say so by not
+// mentioning it.
+func resolve(regs []store.Registration, standing []store.Standing) Summary {
+	return Resolve(regs, standing, testCloses)
+}
+
 func TestResolveAddsUpTheHeadcountAndDiets(t *testing.T) {
-	sum := Resolve(
+	sum := resolve(
 		[]store.Registration{
-			member("anna@x.se", "Anna", 2, 2, store.DietOmnivore, "glutenfritt för ett barn"),
-			member("bo@x.se", "Bo", 1, 0, store.DietVegan, ""),
-			member("dan@x.se", "Dan", 2, 0, store.DietFlexitarian, ""),
+			member("anna", "Anna", 2, 2, store.DietOmnivore, "glutenfritt för ett barn"),
+			member("bo", "Bo", 1, 0, store.DietVegan, ""),
+			member("dan", "Dan", 2, 0, store.DietFlexitarian, ""),
 			guest("Kalle", "Anna", 2, 0, store.DietPescetarian, "skaldjursallergi"),
 		},
-		[]store.Standing{standing("cecilia@x.se", "Cecilia", 2, 1, store.DietVegetarian)},
+		[]store.Standing{standing("cecilia", "Cecilia", 2, 1, store.DietVegetarian)},
 	)
 
 	if sum.People != 12 {
@@ -91,9 +104,9 @@ func TestResolveAddsUpTheHeadcountAndDiets(t *testing.T) {
 
 // A diet that is missing or from an older build still has to be fed.
 func TestAnUnknownDietIsCountedAsEatingEverything(t *testing.T) {
-	sum := Resolve([]store.Registration{
-		member("a@x.se", "A", 1, 0, "", ""),
-		member("b@x.se", "B", 2, 0, store.Diet("makrobiotisk"), ""),
+	sum := resolve([]store.Registration{
+		member("a", "A", 1, 0, "", ""),
+		member("b", "B", 2, 0, store.Diet("makrobiotisk"), ""),
 	}, nil)
 
 	if got := sum.Count(store.DietOmnivore); got != 3 {
@@ -110,9 +123,9 @@ func TestAnUnknownDietIsCountedAsEatingEverything(t *testing.T) {
 
 // Households per diet is what the team counts when laying the table.
 func TestDietsCountHouseholdsAsWellAsPeople(t *testing.T) {
-	sum := Resolve([]store.Registration{
-		member("a@x.se", "A", 2, 0, store.DietVegan, ""),
-		member("b@x.se", "B", 1, 1, store.DietVegan, ""),
+	sum := resolve([]store.Registration{
+		member("a", "A", 2, 0, store.DietVegan, ""),
+		member("b", "B", 1, 1, store.DietVegan, ""),
 	}, nil)
 	for _, c := range sum.Diets {
 		if c.Diet != store.DietVegan {
@@ -127,9 +140,9 @@ func TestDietsCountHouseholdsAsWellAsPeople(t *testing.T) {
 // The whole point of a one-off registration is that it beats the household's
 // standing one, in both directions.
 func TestRegistrationForTheEveningWinsOverTheStandingOne(t *testing.T) {
-	sum := Resolve(
-		[]store.Registration{member("anna@x.se", "Anna", 1, 0, store.DietOmnivore, "")},
-		[]store.Standing{standing("anna@x.se", "Anna", 2, 3, store.DietOmnivore)},
+	sum := resolve(
+		[]store.Registration{member("anna", "Anna", 1, 0, store.DietOmnivore, "")},
+		[]store.Standing{standing("anna", "Anna", 2, 3, store.DietOmnivore)},
 	)
 	if sum.People != 1 {
 		t.Fatalf("People = %d, want 1 — the evening's answer should win", sum.People)
@@ -140,11 +153,11 @@ func TestRegistrationForTheEveningWinsOverTheStandingOne(t *testing.T) {
 }
 
 func TestRegisteringNobodyIsHowYouSkipOneEvening(t *testing.T) {
-	sum := Resolve(
-		[]store.Registration{member("anna@x.se", "Anna", 0, 0, store.DietOmnivore, "")},
+	sum := resolve(
+		[]store.Registration{member("anna", "Anna", 0, 0, store.DietOmnivore, "")},
 		[]store.Standing{
-			standing("anna@x.se", "Anna", 2, 2, store.DietOmnivore),
-			standing("bo@x.se", "Bo", 1, 0, store.DietOmnivore),
+			standing("anna", "Anna", 2, 2, store.DietOmnivore),
+			standing("bo", "Bo", 1, 0, store.DietOmnivore),
 		},
 	)
 	if sum.People != 1 {
@@ -164,9 +177,9 @@ func TestRegisteringNobodyIsHowYouSkipOneEvening(t *testing.T) {
 }
 
 func TestStandingHouseholdsAreMarkedAsSuch(t *testing.T) {
-	sum := Resolve(
-		[]store.Registration{member("anna@x.se", "Anna", 1, 0, store.DietOmnivore, "")},
-		[]store.Standing{standing("bo@x.se", "Bo", 1, 0, store.DietOmnivore)},
+	sum := resolve(
+		[]store.Registration{member("anna", "Anna", 1, 0, store.DietOmnivore, "")},
+		[]store.Standing{standing("bo", "Bo", 1, 0, store.DietOmnivore)},
 	)
 	byName := map[string]Attendee{}
 	for _, a := range sum.Attendees {
@@ -187,11 +200,11 @@ func TestStandingHouseholdsAreMarkedAsSuch(t *testing.T) {
 }
 
 func TestAttendeesAreSortedHouseFirstThenByName(t *testing.T) {
-	sum := Resolve(
+	sum := resolve(
 		[]store.Registration{
 			guest("Adam", "Cecilia", 1, 0, store.DietOmnivore, ""),
-			member("cecilia@x.se", "Cecilia", 1, 0, store.DietOmnivore, ""),
-			member("bo@x.se", "bo", 1, 0, store.DietOmnivore, ""),
+			member("cecilia", "Cecilia", 1, 0, store.DietOmnivore, ""),
+			member("bo", "bo", 1, 0, store.DietOmnivore, ""),
 		},
 		nil,
 	)
@@ -208,11 +221,43 @@ func TestAttendeesAreSortedHouseFirstThenByName(t *testing.T) {
 }
 
 func TestEmptySummary(t *testing.T) {
-	sum := Resolve(nil, nil)
+	sum := resolve(nil, nil)
 	if !sum.Empty() {
 		t.Error("a summary with nobody in it should be Empty")
 	}
 	if sum.People != 0 || sum.Households != 0 {
 		t.Errorf("unexpected counts: %+v", sum)
+	}
+}
+
+// Registering for one evening is refused once its deadline has passed. A
+// standing registration must not be a way round that: one saved afterwards
+// used to appear on a list the cooking team had already been given.
+func TestAStandingRegistrationCannotBeatTheDeadline(t *testing.T) {
+	late := standing("anna", "Anna", 2, 0, store.DietOmnivore)
+	late.UpdatedAt = testCloses.Add(time.Minute)
+
+	sum := Resolve(nil, []store.Standing{late}, testCloses)
+	if sum.People != 0 {
+		t.Errorf("People = %d, want 0 — the deadline had passed when it was saved", sum.People)
+	}
+	if len(sum.Attendees) != 0 {
+		t.Errorf("attendees = %+v, want none", sum.Attendees)
+	}
+}
+
+// The boundary is the same one registration uses: the deadline itself is too
+// late, because Open() is now.Before(Closes).
+func TestAStandingRegistrationSavedExactlyAtTheDeadlineIsTooLate(t *testing.T) {
+	onTheDot := standing("anna", "Anna", 2, 0, store.DietOmnivore)
+	onTheDot.UpdatedAt = testCloses
+	if sum := Resolve(nil, []store.Standing{onTheDot}, testCloses); sum.People != 0 {
+		t.Errorf("People = %d, want 0", sum.People)
+	}
+
+	justInTime := standing("bo", "Bo", 2, 0, store.DietOmnivore)
+	justInTime.UpdatedAt = testCloses.Add(-time.Second)
+	if sum := Resolve(nil, []store.Standing{justInTime}, testCloses); sum.People != 2 {
+		t.Errorf("People = %d, want 2 — a second inside the deadline is in time", sum.People)
 	}
 }

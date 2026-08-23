@@ -46,9 +46,10 @@ Demon säger tydligt ifrån med en banner på varje sida, och all data ligger i
 en slängbar fil: stoppar du containern är allt borta. Kör aldrig `DEMO=true`
 skarpt — lösenorden står ju på sidan.
 
-Saker att prova: anmäl ditt hushåll till en kväll, slå på en **stående
-anmälan** under *Mina anmälningar* och se hur du dyker upp på alla tisdagar,
-tacka nej till en enskild kväll ändå, anmäl dig som gäst utan lösenord, byt
+Saker att prova: anmäl ditt hushåll till en kväll och lägg den i din kalender,
+slå på en **stående anmälan** under *Mina anmälningar* och se hur du dyker upp
+på alla tisdagar, tacka nej till en enskild kväll ändå, anmäl dig som gäst utan
+lösenord och läs kvittot du får på sidan, byt
 språk med flaggan uppe till höger, öppna den utskriftsvänliga **matlistan**,
 och logga in som `admin` för att flytta anmälningsstoppet, byta matlag för en
 kväll eller lägga in ett lov.
@@ -88,9 +89,11 @@ inte det matgruppen har skrivit.
 
 ## Boten i Mattermost
 
-Matlistan skickas som ett direktmeddelande från ett bot-konto i husets
-Mattermost, och samma konto används för att slå upp vilka som finns i huset när
-matgruppen fyller i vem som är lagledare. Så här kopplar du in det:
+Boten är ett konto i husets Mattermost och gör tre saker: bekräftar varje
+anmälan till den som gjorde den, skickar matlistan till lagledaren när anmälan
+stänger, och slår upp vilka som finns i huset så att både hushåll och matgrupp
+kan välja person i stället för att minnas användarnamn. Så här kopplar du in
+det:
 
 1. I Mattermost: **System Console → Integrations → Bot Accounts**, slå på dem.
 2. **Integrations → Bot Accounts → Add Bot Account**. Kalla den `dinner`.
@@ -110,8 +113,10 @@ MATTERMOST_TOKEN=...
 
 Sätt båda eller ingen — halv konfiguration ser inkopplad ut utan att vara det,
 och avvisas därför vid start. Utan dem fungerar sajten ändå: anmälan går som
-vanligt och matlistan ligger på sidan, men ingen blir tillsagd — meddelandet
-skrivs i loggen i stället. Det är också vad demoläget gör: demon når aldrig en
+vanligt, kvällen går att lägga i kalendern från sidan och matlistan ligger där
+den ligger, men ingen blir tillsagd — meddelandena skrivs i loggen i stället.
+Då är fältet för vem man är en vanlig textruta, och det som skrivs sparas som
+det står. Det är också vad demoläget gör: demon når aldrig en
 riktig chattserver och kan därför aldrig råka skriva till någon.
 
 **Bara boten pratar utåt.** Kommunikationen går i en riktning: boten skickar,
@@ -191,10 +196,27 @@ Ett hushåll anmäler **hur många vuxna och hur många barn** som kommer, och
 Ett val per anmälan, inte per person: matlaget lagar en gryta av varje sort, och
 då är summan av valen precis antalet portioner. Äter någon i hushållet annat
 skriver man det i fältet för allergier. En gäst som är flera personer med olika
-kost gör i stället en anmälan per kosthållning — gästanmälningar är inte
-knutna till en adress och får vara hur många som helst.
+kost gör i stället en anmälan per kosthållning — gästanmälningar hör inte till
+något hushåll och får vara hur många som helst.
 
 Allergier och annat skrivs som fri text och hamnar på matlistan.
+
+### Bekräftelsen
+
+Den som anmäler sig får ett **direktmeddelande från boten** med det som blev
+sparat — kväll, klockslag, var maten står, antal, kosthållning och eventuella
+allergier — och **kvällen som kalenderfil**. Tackar man nej blir det ett
+meddelande om det i stället, med kvällen som en avbokning så att den försvinner
+ur kalendern om den redan låg där.
+
+Meddelandet kommer på det språk personen har i Mattermost, inte det sidan råkar
+visa: det är ju chatten som läser det.
+
+Samma kväll ligger också att hämta på anmälningssidan — som `.ics`-fil eller
+med en knapp rakt in i Google Calendar eller Outlook på webben.
+
+Utan Mattermost inkopplat sparas anmälan precis som vanligt; bekräftelsen
+skrivs bara i loggen, och sidan lovar inget utskick.
 
 Efter att anmälan stängt går det inte att anmäla sig eller ändra sig — varken
 som hushåll eller som gäst, och inte heller genom att gå tillbaka till sin egen
@@ -211,9 +233,14 @@ att röra sin stående anmälan.
 ### Gäster
 
 Gäster anmäler sig själva på <https://din-adress/gast> utan lösenord. De väljer
-kväll, skriver sitt namn och vem de hälsar på, och får en egen länk tillbaka
-så att de kan ändra sig eller avanmäla sig. Sidan visar aldrig något om huset —
-bara gästens egen anmälan. Går att stänga av helt under **Inställningar**.
+kväll, skriver sitt namn och vem de hälsar på — och lämnar ingen adress alls,
+för ingenting skickas till dem. **Sidan är kvittot:** den visar vad som blev
+anmält, erbjuder kvällen till gästens egen kalender, och ger en länk tillbaka så
+att de kan ändra sig eller avanmäla sig. Länken är hela relationen, och det är
+gästen som förvarar den.
+
+Sidan visar aldrig något om huset — bara gästens egen anmälan, och inte ens
+vilket lag som lagar. Går att stänga av helt under **Inställningar**.
 
 ### Matlistan och utskicket
 
@@ -298,17 +325,25 @@ vet ju inte vad den som läser det har för inställningar.
 
 ### Vem som ser vad
 
-Alla i huset delar ett lösenord — det finns inga konton. Man säger vem man är
-med **sin e-postadress**, och det är den som knyter anmälan till hushållet så
-att man kan ändra sig senare.
+Alla i huset delar ett lösenord — sajten har inga egna konton. Man säger vem man
+är genom att **välja sitt konto i husets Mattermost**, och det är det som knyter
+anmälan till hushållet så att man kan ändra sig senare. Det är också dit
+bekräftelsen kommer. Ingen e-postadress finns kvar i sajten, varken för hushåll
+eller för gäster.
 
-Adressen visas bara för en själv, för matgruppen i administrationen och i
-CSV-exporten. Andra i huset ser namn, antal och specialkost — aldrig adresser.
+Fältet fungerar som på bokningssidan: skriv namnet eller användarnamnet, och
+sidan söker i husets katalog medan du skriver. Man kan lika gärna skriva
+`@anna.andersson`, klistra in en profillänk eller bara skriva *Anna* — pekar det
+på en enda person blir det den personen, pekar det på flera säger sidan vilka i
+stället för att gissa. Fungerar även utan JavaScript: då skriver man
+användarnamnet självt.
 
-Hushållens adresser har ingenting att göra med matlagens användarnamn i
-Mattermost. Adressen är hushållets egen nyckel till sina anmälningar;
-användarnamnet är hur sajten når en lagledare. Anmälan kräver alltså inget
-Mattermost-konto — bara husets lösenord.
+Användarnamnet visas bara för en själv, för matgruppen i administrationen och i
+CSV-exporten. Andra i huset ser namn, antal och specialkost — aldrig konton.
+
+Anmälan kräver alltså både husets lösenord och ett konto i husets chat. Gäster
+kräver ingetdera: de anmäler sig utan lösenord och utan konto, och får sin
+bekräftelse på sidan.
 
 ---
 
@@ -407,6 +442,7 @@ Det som är hemligt eller beror på var sidan står.
 make            # visar alla kommandon
 make demo       # kör demon lokalt
 make test       # go test ./...
+make test-js    # testerna för sökningen i webbläsaren (kräver Node)
 make race       # med kapplöpningsdetektorn
 make check      # fmt + vet + race + kontrollera config.yaml
 make image      # bygg containern lokalt
@@ -414,7 +450,10 @@ make image      # bygg containern lokalt
 
 Koden är server-renderad HTML utan byggsteg. `internal/web/static/app.js` är
 bara små förbättringar — allt fungerar utan JavaScript, inklusive flikarna i
-administrationen, som är vanliga länkar.
+administrationen, som är vanliga länkar, och fälten där man väljer person, som
+utan skript är textrutor som tar ett användarnamn. Sökningen bland husets
+konton ligger i `members.js` och rör inget DOM, så den kan testas för sig med
+`make test-js`.
 
 | Paket | Ansvar |
 |---|---|
@@ -424,6 +463,7 @@ administrationen, som är vanliga länkar.
 | `internal/store` | SQLite: lag, säsonger, uppehåll, anmälningar, utskicksloggen |
 | `internal/dinner` | Schemat, turordningen och summeringen. Rör aldrig databasen |
 | `internal/mattermost` | Boten: uppslag i husets katalog och direktmeddelanden |
+| `internal/ical` | Kvällen som kalenderfil och som knapp in i Google och Outlook |
 | `internal/web` | Routing, sidor, mallar och utskicket |
 | `internal/setup` | Första starten och demodatan |
 
@@ -435,10 +475,25 @@ måste laga.
 
 Kom du från versionen som mejlade matlistan får matlagen en kolumn för
 användarnamn, och kolumnen med lagledarnas e-postadresser tas bort: det går
-inte längre att skicka något dit, och då ska adresserna inte ligga kvar. Lagen,
-turordningen och alla anmälningar är orörda, men **matgruppen måste fylla i ett
-användarnamn per lag** — tills dess står det *ingen lagledare* och ingen får
-någon lista. Lagledarens namn skrivs över med namnet på kontot när laget sparas. Ta en kopia av `data/dinners.db` innan du uppgraderar, som alltid.
+inte längre att skicka något dit, och då ska adresserna inte ligga kvar. Lagen
+och turordningen är orörda, men **matgruppen måste fylla i ett användarnamn per
+lag** — tills dess står det *ingen lagledare* och ingen får någon lista.
+Lagledarens namn skrivs över med namnet på kontot när laget sparas.
+
+Kom du från versionen där **hushållen kändes igen på sin e-postadress** är det
+en större sak, för en adress går inte att räkna om till ett Mattermost-konto:
+
+* Adressen tas bort ur både anmälningar och stående anmälningar.
+* **De stående anmälningarna nollas.** En stående anmälan utan hushåll bakom sig
+  hade fortsatt räkna in folk varje vecka utan att någon kunde ändra den.
+* **Anmälningar till kvällar som ännu inte ätits tas bort**, så att ett hushåll
+  som anmäler sig igen inte räknas dubbelt. Kvällar som redan är avklarade
+  ligger kvar precis som de var — det är husets historik.
+* Gästanmälningar rörs inte: de har aldrig hört till en adress.
+
+Säg alltså till huset att **anmäla sig igen och slå på sin stående anmälan** när
+ni uppgraderar, helst mellan två anmälningsstopp. Ta en kopia av
+`data/dinners.db` innan du uppgraderar, som alltid.
 
 Datum lagras som `2006-01-02` i husets egen tidszon. En middag är en kväll, inte
 ett ögonblick, och det tar bort alla sommartidsfällor på en gång. Tidpunkter

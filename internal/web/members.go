@@ -3,34 +3,45 @@ package web
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/O5ten/dinners/internal/i18n"
 	"github.com/O5ten/dinners/internal/mattermost"
+	"github.com/O5ten/dinners/internal/store"
 )
 
-// memberCacheTTL is how long the directory listing is reused. The admin view
-// asks for the whole house whenever the teams page is opened, and the house
-// does not gain a member between two of those.
+// memberCacheTTL is how long the directory listing is reused. The browser asks
+// for the whole house whenever a form with a person in it is opened, and the
+// house does not gain a member between two of those.
 const memberCacheTTL = 5 * time.Minute
 
-// memberSuggestion is one person the admin view can pick as a team leader.
-// Name is what the administrator reads; Username is what the form submits.
+// memberSuggestion is one row in a picker. Name is what the reader sees;
+// Username is what the form submits.
 type memberSuggestion struct {
 	Username string `json:"username"`
 	Name     string `json:"name"`
 }
 
-// memberList is everyone the house's Mattermost knows about. Truncated says
-// the server is too large to send at once, so the list on the page is a part
-// of it and a username still has to be allowed to be typed by hand.
+// memberList is the picker's whole world: everyone in the house's Mattermost.
+//
+// AskServer tells the browser not to rely on Users: it should send what was
+// typed here and let this server search. Two things ask for that — a directory
+// too large to send at once, and a directory the bot is not allowed to list at
+// all. Listing everybody needs rights a bot token is not usually given, while
+// searching needs none beyond seeing the people it shares a team with, so the
+// picker has to keep working when only the second is available.
+//
+// Unreachable says the lookup failed rather than found nobody. An empty list
+// and a broken one look identical to a browser, and the difference is the
+// whole message: "nobody by that name" or "Mattermost could not be reached".
 type memberList struct {
-	Users     []memberSuggestion `json:"users"`
-	Truncated bool               `json:"truncated"`
+	Users       []memberSuggestion `json:"users"`
+	AskServer   bool               `json:"askServer"`
+	Unreachable bool               `json:"unreachable"`
 }
 
 // memberCache holds the directory between requests.
@@ -40,30 +51,35 @@ type memberCache struct {
 	at   time.Time
 }
 
-// errNoSuchLeader says nobody in the house answers to what was typed.
-var errNoSuchLeader = errors.New("no such mattermost account")
-
-// ambiguousLeader says several people do. It carries them, so the page can
-// name them instead of only saying no.
-type ambiguousLeader struct{ Candidates []mattermost.User }
-
-func (e ambiguousLeader) Error() string {
-	return "several mattermost accounts match: " + describe(e.Candidates)
-}
-
-// Who lists the matching people the way the admin view talks about them.
-func (e ambiguousLeader) Who() string { return describe(e.Candidates) }
-
-// handleAdminMembers answers the teams page's lookup of who is in the house,
-// so the leader field can offer the actual accounts instead of leaving the
-// administrator to remember usernames. It is behind the admin gate like the
-// page that uses it.
-func (s *Server) handleAdminMembers(w http.ResponseWriter, r *http.Request, v *view) {
-	out, err := s.memberDirectory(r.Context())
+// handleMembers answers the pickers' lookups of who is in the house: the
+// household saying who it is, and the admin view naming a cooking team's
+// leader. Without a query it returns everyone, which the browser indexes and
+// searches as you type; with ?q= it searches server-side, which is the
+// fallback for a directory too large to send.
+//
+// It is behind the house password like every other page, so the list of who
+// lives here never leaves the house.
+func (s *Server) handleMembers(w http.ResponseWriter, r *http.Request, v *view) {
+	var (
+		out memberList
+		err error
+	)
+	if term := strings.TrimSpace(r.URL.Query().Get("q")); term != "" {
+		out, err = s.searchMembers(r.Context(), term)
+	} else {
+		out, err = s.memberDirectory(r.Context())
+	}
 	if err != nil {
-		s.log.Error("mattermost directory", "err", err)
-		http.Error(w, `{"error":"mattermost"}`, http.StatusBadGateway)
-		return
+		// A failure here used to be a 502, which the picker had no answer for:
+		// it caught the error, offered nothing, and left a field that looked
+		// like it simply did not work. Saying so instead lets the browser fall
+		// back to asking us to search, and show a reason if that fails too.
+		s.log.Error("mattermost lookup", "q", r.URL.Query().Get("q"), "err", err)
+		out = memberList{
+			Users:       []memberSuggestion{},
+			AskServer:   true,
+			Unreachable: true,
+		}
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
@@ -72,9 +88,23 @@ func (s *Server) handleAdminMembers(w http.ResponseWriter, r *http.Request, v *v
 	}
 }
 
+// searchMembers asks Mattermost to search, for a term of at least two letters.
+func (s *Server) searchMembers(ctx context.Context, term string) (memberList, error) {
+	out := memberList{Users: []memberSuggestion{}}
+	if len([]rune(term)) < 2 {
+		return out, nil
+	}
+	users, err := s.mm.Search(ctx, term)
+	if err != nil {
+		return out, err
+	}
+	out.Users = suggestions(users)
+	return out, nil
+}
+
 // memberDirectory returns everyone in the house's Mattermost, from a
 // short-lived cache. Without a chat server there is nobody to offer, which
-// leaves the leader field a plain text box.
+// leaves the field a plain text box.
 func (s *Server) memberDirectory(ctx context.Context) (memberList, error) {
 	s.members.mu.Lock()
 	defer s.members.mu.Unlock()
@@ -84,21 +114,22 @@ func (s *Server) memberDirectory(ctx context.Context) (memberList, error) {
 
 	users, truncated, err := s.mm.Directory(ctx)
 	if err != nil {
+		// Not cached: the next keystroke should be free to try again.
 		return memberList{Users: []memberSuggestion{}}, err
 	}
 	if truncated {
-		s.log.Warn("the mattermost directory is larger than the list the page holds; "+
-			"a username can still be typed in full",
+		s.log.Warn("the mattermost directory is larger than the picker holds; "+
+			"falling back to searching on the server",
 			"listed", len(users), "limit", mattermost.DirectoryLimit)
 	}
 
-	list := memberList{Users: suggestions(users), Truncated: truncated}
+	list := memberList{Users: suggestions(users), AskServer: truncated}
 	s.members.list, s.members.at = list, s.now()
 	return list, nil
 }
 
-// suggestions sorts the accounts by the name the administrator reads, so the
-// list is already in a sensible order before anybody types anything.
+// suggestions sorts the accounts by the name the reader reads, so an
+// unfiltered list is already in a sensible order before anybody types.
 func suggestions(users []mattermost.User) []memberSuggestion {
 	out := make([]memberSuggestion, 0, len(users))
 	for _, u := range users {
@@ -117,6 +148,60 @@ func suggestions(users []mattermost.User) []memberSuggestion {
 	return out
 }
 
+// findMember turns what someone typed into one account, or into the sentence
+// they should read. The field is a plain text input, so it has to cope with
+// everything a person might reasonably leave in it: a username picked from the
+// list, "@anna.andersson" pasted from a message, a full name, a nickname, or
+// just "Anna" because that is all they know. Anything that points at exactly
+// one person resolves to that person; anything that points at several says who
+// they are, so the next keystroke settles it. Only a term that matches nobody
+// is an error.
+func (s *Server) findMember(ctx context.Context, lang i18n.Lang, typed string) (mattermost.User, string) {
+	typed = strings.TrimSpace(typed)
+	if typed == "" {
+		return mattermost.User{}, i18n.T(lang, "member.whose")
+	}
+	// Without a chat server there is nothing to look anything up in, so the
+	// field is taken as typed. This is what the demo and local development do.
+	if !s.mm.Enabled() {
+		return mattermost.User{Username: asUsername(typed)}, ""
+	}
+
+	// A username is an exact address: look it up directly and skip searching.
+	if username := mattermost.Username(typed); looksLikeUsername(username) {
+		if u, err := s.mm.ByUsername(ctx, username); err == nil {
+			return u, ""
+		}
+		// Not a username after all — fall through and search for it as a name,
+		// so "Bo" finds Bo even though it looked like one.
+	}
+
+	candidates, err := s.mm.Search(ctx, typed)
+	if err != nil {
+		s.log.Error("mattermost name search", "term", typed, "err", err)
+		return mattermost.User{}, i18n.T(lang, "member.unreachable")
+	}
+
+	// A term that is somebody's whole name, nickname or username wins over one
+	// that merely starts it: with both "Anna Andersson" and "Anna Anderssen"
+	// in the house, typing the first name in full means the first person.
+	several := "member.several.matching"
+	if exact := exactly(candidates, typed); len(exact) > 0 {
+		candidates, several = exact, "member.several.named"
+	}
+
+	switch len(candidates) {
+	case 1:
+		return candidates[0], ""
+	case 0:
+		return mattermost.User{}, i18n.T(lang, "member.unknown", typed)
+	default:
+		// Never guess between people. Naming them turns the dead end into a
+		// choice: one more letter, or a click in the list, settles it.
+		return mattermost.User{}, i18n.T(lang, several, typed, describe(lang, candidates))
+	}
+}
+
 // resolveLeader turns what the teams form posted into the account the list
 // will be sent to.
 //
@@ -125,44 +210,11 @@ func suggestions(users []mattermost.User) []memberSuggestion {
 // save the team. Anything else has to be a real, active person: a team leader
 // who is a typo is worse than one who is missing, because the site would go on
 // claiming the list had been sent.
-//
-// The field takes what an administrator is likely to have: a username picked
-// from the list, "@anna.andersson" pasted from a message, or a full name,
-// because that is what they know. A name that points at exactly one person is
-// that person; one that points at several is refused, since guessing which
-// neighbour cooks is not ours to do.
-func (s *Server) resolveLeader(ctx context.Context, typed string) (mattermost.User, error) {
-	typed = strings.TrimSpace(typed)
-	if typed == "" {
-		return mattermost.User{}, nil
+func (s *Server) resolveLeader(ctx context.Context, lang i18n.Lang, typed string) (mattermost.User, string) {
+	if strings.TrimSpace(typed) == "" {
+		return mattermost.User{}, ""
 	}
-	// Without a chat server there is nothing to look anything up in, so the
-	// field is taken as typed. This is what local development does.
-	if !s.mm.Enabled() {
-		return mattermost.User{Username: mattermost.Username(typed)}, nil
-	}
-	if u, err := s.mm.ByUsername(ctx, typed); err == nil {
-		return u, nil
-	}
-	// Not a username, then. Perhaps it is a name.
-	hits, err := s.mm.Search(ctx, typed)
-	if err != nil {
-		return mattermost.User{}, err
-	}
-	// A term that is somebody's whole name or username beats one that merely
-	// starts it, so "Anna Andersson" finds Anna even with an Anna Anderssen
-	// in the house.
-	if exact := exactly(hits, typed); len(exact) > 0 {
-		hits = exact
-	}
-	switch len(hits) {
-	case 1:
-		return hits[0], nil
-	case 0:
-		return mattermost.User{}, errNoSuchLeader
-	default:
-		return mattermost.User{}, ambiguousLeader{Candidates: hits}
-	}
+	return s.findMember(ctx, lang, typed)
 }
 
 // exactly returns the accounts whose full name, nickname or username is the
@@ -179,17 +231,42 @@ func exactly(users []mattermost.User, term string) []mattermost.User {
 	return out
 }
 
-// describe lists people the way the admin view talks about them, so an
-// ambiguous name reads as a choice rather than a rejection.
-func describe(users []mattermost.User) string {
+// describe lists people the way the pages talk about them, so an ambiguous
+// term reads as a choice rather than a rejection.
+func describe(lang i18n.Lang, users []mattermost.User) string {
 	const most = 5
 	var names []string
 	for i, u := range users {
 		if i == most {
-			names = append(names, "…")
+			names = append(names, i18n.T(lang, "member.andmore"))
 			break
 		}
 		names = append(names, u.DisplayName()+" (@"+u.Username+")")
 	}
 	return strings.Join(names, ", ")
+}
+
+// asUsername makes a household key out of whatever was typed when there is no
+// chat server to look it up in. A full name becomes the username it probably
+// is — "Anna Andersson" is "anna.andersson" — because the household reads this
+// back on its own page, and a key with a space in it looks like a mistake.
+func asUsername(typed string) string {
+	return store.Member(mattermost.Username(strings.Join(strings.Fields(typed), ".")))
+}
+
+// looksLikeUsername reports whether a value could be a Mattermost username at
+// all. Names with spaces or accents never are.
+func looksLikeUsername(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case r == '.', r == '-', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
 }

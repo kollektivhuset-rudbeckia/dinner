@@ -3,9 +3,9 @@ package web
 import (
 	"database/sql"
 	"encoding/csv"
-	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -191,21 +191,29 @@ func nextRotationOffset(world *world) int {
 	return (last.RotationOffset + n) % active
 }
 
+// adminRedirect sends the browser back to the part of the admin view the form
+// was posted from, with a word about what happened.
+//
+// The address is built here rather than taken from the form. It used to be a
+// hidden "back" field holding a whole URL, which went wrong twice over: the
+// tab was not in it, so every save landed on the first tab, and the "sparat"
+// query was appended after the "#lag" fragment, where a browser reads it as
+// part of the fragment and never sends it — so the confirmation never showed
+// either. A form only needs to say which tab it belongs to.
 func (s *Server) adminRedirect(w http.ResponseWriter, r *http.Request, saved string) {
-	back := r.FormValue("back")
-	if back == "" {
-		back = "/admin"
+	tab := adminTab(r.FormValue("flik"))
+	q := url.Values{}
+	q.Set("flik", tab)
+	// The schedule is shown one season at a time, so a save there has to come
+	// back to the season it was made in rather than to whichever one is
+	// current.
+	if raw := strings.TrimSpace(r.FormValue("sasong")); raw != "" {
+		if _, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			q.Set("sasong", raw)
+		}
 	}
-	// Never redirect anywhere but back into the admin view: `back` comes from
-	// the form, and a form field is not a safe place to learn a URL from.
-	if !strings.HasPrefix(back, "/admin") {
-		back = "/admin"
-	}
-	sep := "?"
-	if strings.Contains(back, "?") {
-		sep = "&"
-	}
-	http.Redirect(w, r, back+sep+"sparat="+saved, http.StatusSeeOther)
+	q.Set("sparat", saved)
+	http.Redirect(w, r, "/admin?"+q.Encode()+"#"+tab, http.StatusSeeOther)
 }
 
 func (s *Server) handleAdminTeam(w http.ResponseWriter, r *http.Request, v *view) {
@@ -234,23 +242,13 @@ func (s *Server) handleAdminTeam(w http.ResponseWriter, r *http.Request, v *view
 		return
 	}
 	typed := strings.TrimSpace(r.FormValue("leader_username"))
-	leader, err := s.resolveLeader(ctx, typed)
-	if err != nil {
-		var many ambiguousLeader
-		switch {
-		case errors.As(err, &many):
-			s.renderError(w, r, http.StatusUnprocessableEntity,
-				i18n.T(v.Lang, "error.team.username.many", typed),
-				i18n.T(v.Lang, "error.team.username.many.detail", many.Who()))
-		case errors.Is(err, errNoSuchLeader):
-			s.renderError(w, r, http.StatusUnprocessableEntity,
-				i18n.T(v.Lang, "error.team.username", typed),
-				i18n.T(v.Lang, "error.team.username.detail"))
-		default:
-			s.log.Error("look up team leader", "typed", typed, "err", err)
-			s.errorPage(w, r, http.StatusBadGateway,
-				"error.team.username.unreachable", "error.team.username.unreachable.detail")
-		}
+	// The same lookup the household's own field uses, and the same sentences
+	// back: a name that means one person is that person, a name that means
+	// several says which, and a name that means nobody is refused.
+	leader, problem := s.resolveLeader(ctx, v.Lang, typed)
+	if problem != "" {
+		s.renderError(w, r, http.StatusUnprocessableEntity,
+			i18n.T(v.Lang, "error.team.leader"), problem)
 		return
 	}
 	// The name is never typed: it comes from the account, spelled the way its
@@ -270,6 +268,104 @@ func (s *Server) handleAdminTeam(w http.ResponseWriter, r *http.Request, v *view
 		return
 	}
 	s.log.Info("team saved", "name", name, "leader", leader.Username)
+	s.adminRedirect(w, r, "lag")
+}
+
+// handleAdminTeams saves every cooking team in one go, which is how the teams
+// tab is actually used: setting a season up means naming four or five teams and
+// their leaders, and saving each one on its own meant a page load per team and
+// a scroll back to where you were.
+//
+// The rows post their fields keyed by team id — name_7, leader_7, active_7 —
+// so one form can carry them all without the values of one row being mistaken
+// for another's.
+//
+// Every leader is looked up before anything is written. A team whose leader is
+// a typo would otherwise be saved without one while its neighbours went
+// through, leaving the administrator to work out which of five rows was
+// refused; this way nothing changes until all of them can.
+func (s *Server) handleAdminTeams(w http.ResponseWriter, r *http.Request, v *view) {
+	ctx := r.Context()
+	if err := r.ParseForm(); err != nil {
+		s.errorPage(w, r, http.StatusBadRequest,
+			"error.form", "error.form.detail")
+		return
+	}
+
+	// The delete buttons sit inside this form, so they arrive here.
+	if raw := r.FormValue("delete"); raw != "" {
+		id := parseID(raw)
+		if err := s.store.DeleteTeam(ctx, id); err != nil {
+			s.fail(w, r, "delete team", err)
+			return
+		}
+		s.log.Info("team deleted", "id", id)
+		s.adminRedirect(w, r, "lag-borttaget")
+		return
+	}
+
+	current, err := s.store.Teams(ctx)
+	if err != nil {
+		s.fail(w, r, "read teams", err)
+		return
+	}
+	known := make(map[int64]store.Team, len(current))
+	for _, t := range current {
+		known[t.ID] = t
+	}
+
+	var (
+		pending  []store.Team
+		problems []string
+	)
+	for _, raw := range r.Form["id"] {
+		id := parseID(raw)
+		was, ok := known[id]
+		if !ok {
+			// A team deleted in another tab while this page was open. Saving a
+			// row for it would resurrect it under a new id, so skip it.
+			s.log.Warn("skipping a team that no longer exists", "id", id)
+			continue
+		}
+		name := strings.TrimSpace(r.FormValue("name_" + raw))
+		if name == "" {
+			s.errorPage(w, r, http.StatusUnprocessableEntity,
+				"error.team.name", "error.team.name.detail")
+			return
+		}
+		leader, problem := s.resolveLeader(ctx, v.Lang, r.FormValue("leader_"+raw))
+		if problem != "" {
+			// Name the row: with five of them on screen, "several people are
+			// called Anna" is only useful once you know which team it is about.
+			problems = append(problems, was.Name+": "+problem)
+			continue
+		}
+		leaderName := ""
+		if leader.ID != "" {
+			leaderName = leader.DisplayName()
+		}
+		pending = append(pending, store.Team{
+			ID:             id,
+			Name:           name,
+			LeaderName:     leaderName,
+			LeaderUsername: leader.Username,
+			Active:         r.FormValue("active_"+raw) != "",
+		})
+	}
+
+	if len(problems) > 0 {
+		s.renderError(w, r, http.StatusUnprocessableEntity,
+			i18n.T(v.Lang, "error.team.leader"), strings.Join(problems, " "))
+		return
+	}
+
+	for _, t := range pending {
+		if _, err := s.store.SaveTeam(ctx, t); err != nil {
+			s.fail(w, r, "save team", err)
+			return
+		}
+	}
+	s.log.Info("teams saved", "count", len(pending))
 	s.adminRedirect(w, r, "lag")
 }
 
@@ -658,7 +754,7 @@ func (s *Server) handleAdminCSV(w http.ResponseWriter, r *http.Request, v *view)
 	cw := csv.NewWriter(w)
 	defer cw.Flush()
 	cw.Write([]string{"datum", "veckodag", "matlag", "instald", "namn",
-		"lagenhet", "epost", "gast", "vard", "staende", "vuxna", "barn",
+		"lagenhet", "mattermost", "gast", "vard", "staende", "vuxna", "barn",
 		"kosthallning", "specialkost"})
 	for _, d := range dinners {
 		team := ""
@@ -672,7 +768,7 @@ func (s *Server) handleAdminCSV(w http.ResponseWriter, r *http.Request, v *view)
 		for _, a := range summaries[d.Key].Attendees {
 			cw.Write([]string{
 				d.Key, i18n.WeekdayShort(lang, d.Date), team, cancelled,
-				a.Name, a.Apartment, a.Email,
+				a.Name, a.Apartment, a.Member,
 				yesNo(a.Guest), a.Host, yesNo(a.Standing),
 				strconv.Itoa(a.Adults), strconv.Itoa(a.Children),
 				string(a.Diet), a.Note,

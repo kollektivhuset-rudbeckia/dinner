@@ -88,3 +88,35 @@
 	{{end}}
 </div>
 {{end}}
+
+{{/* Keeping an evening in your own calendar. It is the same offer wherever it
+     appears: a file for the calendars that read files, and a link each for the
+     two web calendars people actually use. */}}
+{{define "calendar"}}
+<h2 class="section-title">{{t "cal.title"}}</h2>
+<div class="calbuttons">
+	<a class="button" href="{{.ICS}}">{{t "cal.ics"}} <small>{{t "cal.ics.hint"}}</small></a>
+	<a class="button" href="{{.Google}}" target="_blank" rel="noopener">{{t "cal.google"}}</a>
+	<a class="button ghost" href="{{.Outlook}}" target="_blank" rel="noopener">{{t "cal.outlook"}}</a>
+</div>
+{{end}}
+
+{{/* The picker for a person in the house's Mattermost. It appears three times
+     — a household saying who it is, a cooking team's leader, and a new team's
+     — and the three have to agree about the markup app.js looks for, so they
+     share this. Takes: ID, Name, Value, NameField, Required, Autofocus. */}}
+{{define "memberfield"}}
+<div class="member-field">
+	<span class="member-at" aria-hidden="true">@</span>
+	<input id="{{.ID}}" name="{{.Name}}" type="text" value="{{.Value}}"
+	       placeholder="Anna Andersson" autocomplete="off" spellcheck="false"
+	       autocapitalize="none" aria-controls="{{.ID}}-list"
+	       {{if .Required}}required{{end}}{{if .Autofocus}} autofocus{{end}}
+	       data-member-search
+	       {{with .NameField}}data-member-name="{{.}}"{{end}}
+	       data-member-none="{{t "member.picker.none"}}"
+	       data-member-error="{{t "member.picker.error"}}">
+	<ul class="combo-list" id="{{.ID}}-list" role="listbox"
+	    aria-label="{{t "ident.member.list"}}" hidden></ul>
+</div>
+{{end}}

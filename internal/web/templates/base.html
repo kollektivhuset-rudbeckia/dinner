@@ -26,10 +26,13 @@
 <meta name="robots" content="noindex, nofollow">
 <meta name="color-scheme" content="light dark">
 <title>{{if .Title}}{{.Title}} · {{end}}{{.Site.Title}}</title>
-<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="{{asset "app.css"}}">
 <link rel="icon" href="/static/rudbeckia.png" type="image/png">
 <link rel="apple-touch-icon" href="/static/rudbeckia.png">
-<script src="/static/app.js" defer></script>
+{{/* members.js first: app.js reads window.RBMembers when it wires up the
+     pickers. Both are deferred, so they run in this order. */}}
+<script src="{{asset "members.js"}}" defer></script>
+<script src="{{asset "app.js"}}" defer></script>
 </head>
 <body>
 <a class="skip" href="#main">{{t "layout.skip"}}</a>

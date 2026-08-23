@@ -441,6 +441,37 @@ label { font-size: .85rem; }
 .field-wide { grid-column: 1 / -1; }
 .field-narrow { max-width: 8rem; }
 .hint { color: var(--text-faint); font-size: .78rem; margin: 0; }
+
+/* The @ sits inside the field so a Mattermost username looks like one. */
+.member-field { position: relative; display: flex; align-items: center; }
+.member-field .member-at {
+	position: absolute; left: .7rem; color: var(--text-faint); font-size: .95rem;
+	pointer-events: none;
+}
+.member-field input { padding-left: 1.7rem; }
+
+/* The people the picker offers, over whatever follows the field. */
+.combo-list {
+	position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 20;
+	margin: 0; padding: .25rem; list-style: none; max-height: 15rem; overflow-y: auto;
+	background: var(--bg); border: 1px solid var(--line);
+	border-radius: var(--radius-sm); box-shadow: var(--shadow);
+}
+.combo-option {
+	display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap;
+	padding: .4rem .55rem; border-radius: 3px; cursor: pointer; font-size: .95rem;
+}
+.combo-option span { color: var(--text-faint); font-size: .8rem; }
+.combo-option:hover, .combo-option[aria-selected="true"] {
+	background: var(--accent-soft); color: var(--accent-strong);
+}
+.combo-option[aria-selected="true"] span { color: inherit; }
+/* Not somebody to pick: a reason there is nobody to pick. */
+.combo-note { padding: .4rem .55rem; color: var(--text-faint); font-size: .85rem; }
+
+/* Handing an evening to the calendar the household already keeps. */
+.calbuttons { display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+.confirm-mark { color: var(--ok-text); margin-bottom: .75rem; }
 .checkbox { display: flex; align-items: center; gap: .5rem; margin: 1rem 0; color: var(--text-muted); }
 .checkbox input { accent-color: var(--accent); width: 1rem; height: 1rem; min-height: 0; }
 .form-actions { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin-top: 1.25rem; }

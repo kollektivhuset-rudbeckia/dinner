@@ -1,6 +1,7 @@
 // Package auth implements the house's shared-password gate. There are no user
-// accounts: one password lets a member in, an optional second one unlocks the
-// admin view, and a member says who they are by giving their e-mail address.
+// accounts of its own: one password lets a member in, an optional second one
+// unlocks the admin view, and a member says who they are by picking their
+// Mattermost account.
 package auth
 
 import (
@@ -11,7 +12,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
-	"net/mail"
 	"strconv"
 	"strings"
 	"time"
@@ -38,7 +38,8 @@ const (
 )
 
 // Guard validates passwords, issues session cookies and signs the capability
-// links that let a cooking-team leader open one dinner's list from an e-mail.
+// links that let a cooking-team leader open one dinner's list straight from
+// the message the bot sent them.
 type Guard struct {
 	password      string
 	adminPassword string
@@ -86,7 +87,7 @@ func (g *Guard) Issue(w http.ResponseWriter, role Role) {
 }
 
 // Clear removes the session cookie. The identity cookie is left alone, so
-// logging back in does not mean typing your e-mail address again.
+// logging back in does not mean saying who you are again.
 func (g *Guard) Clear(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
@@ -122,24 +123,29 @@ func (g *Guard) Role(r *http.Request) Role {
 	return RoleNone
 }
 
-// Identity is who the member says they are. The e-mail address is the
-// identifier that ties a registration to a household; it is never shown to
-// anyone but the member themselves and the administrator.
+// Identity is who the member says they are: their Mattermost account, plus
+// the name and apartment the cooking team reads on the list.
+//
+// MMUsername is the identifier a registration hangs on — one household, one
+// account — and MMUserID is how the bot reaches them with a confirmation. The
+// username is shown only to the member themselves and to the administrator.
 type Identity struct {
-	Name      string
-	Apartment string
-	Email     string
+	Name       string
+	Apartment  string
+	MMUsername string
+	MMUserID   string
 }
 
 // Known reports whether the member has told us who they are.
-func (i Identity) Known() bool { return i.Email != "" && i.Name != "" }
+func (i Identity) Known() bool { return i.MMUsername != "" && i.Name != "" }
 
 // Remember stores the member's details in a signed, long-lived cookie.
 func (g *Guard) Remember(w http.ResponseWriter, id Identity) {
 	raw := strings.Join([]string{
 		base64.RawURLEncoding.EncodeToString([]byte(id.Name)),
 		base64.RawURLEncoding.EncodeToString([]byte(id.Apartment)),
-		base64.RawURLEncoding.EncodeToString([]byte(id.Email)),
+		base64.RawURLEncoding.EncodeToString([]byte(id.MMUsername)),
+		base64.RawURLEncoding.EncodeToString([]byte(id.MMUserID)),
 	}, "~")
 	exp := time.Now().Add(365 * 24 * time.Hour)
 	http.SetCookie(w, &http.Cookie{
@@ -178,7 +184,10 @@ func (g *Guard) Identity(r *http.Request) Identity {
 		return Identity{}
 	}
 	parts := strings.Split(raw, "~")
-	if len(parts) != 3 {
+	// Cookies written before the Mattermost switch had three parts, with an
+	// e-mail address where the account now goes. There is nothing to salvage,
+	// so they are simply forgotten and the member is asked once more.
+	if len(parts) != 4 {
 		return Identity{}
 	}
 	dec := func(s string) string {
@@ -188,12 +197,17 @@ func (g *Guard) Identity(r *http.Request) Identity {
 		}
 		return string(b)
 	}
-	return Identity{Name: dec(parts[0]), Apartment: dec(parts[1]), Email: dec(parts[2])}
+	return Identity{
+		Name:       dec(parts[0]),
+		Apartment:  dec(parts[1]),
+		MMUsername: dec(parts[2]),
+		MMUserID:   dec(parts[3]),
+	}
 }
 
 // Key signs a capability: a link that grants access to one thing without a
-// password. It is how the mail to a cooking-team leader can point straight at
-// that dinner's list.
+// password. It is how the message to a cooking-team leader can point straight
+// at that dinner's list.
 func (g *Guard) Key(purpose, subject string, ttl time.Duration) string {
 	payload := base64.RawURLEncoding.EncodeToString([]byte(purpose + "|" + subject))
 	return g.sign(payload, time.Now().Add(ttl))
@@ -259,26 +273,4 @@ func ID() string {
 		panic(fmt.Sprintf("crypto/rand unavailable: %v", err))
 	}
 	return base64.RawURLEncoding.EncodeToString(b)
-}
-
-// NormalizeEmail lower-cases and trims an address so the same household is
-// always the same key, whatever they typed.
-func NormalizeEmail(s string) string {
-	return strings.ToLower(strings.TrimSpace(s))
-}
-
-// ValidEmail reports whether s looks like a deliverable address.
-func ValidEmail(s string) bool {
-	s = strings.TrimSpace(s)
-	if s == "" || len(s) > 254 || strings.ContainsAny(s, " \t\r\n,;") {
-		return false
-	}
-	addr, err := mail.ParseAddress(s)
-	if err != nil || addr.Address != s {
-		return false
-	}
-	at := strings.LastIndexByte(s, '@')
-	// A bare "user@host" is not deliverable off the machine; insist on a dot
-	// in the domain so a typo does not silently swallow the confirmation.
-	return at > 0 && strings.Contains(s[at+1:], ".")
 }

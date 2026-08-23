@@ -77,45 +77,47 @@ func Bootstrap(ctx context.Context, st *store.Store, cfg *config.Config, dir Dir
 type household struct {
 	Name      string
 	Apartment string
-	Email     string
-	Adults    int
-	Children  int
-	Diet      store.Diet
-	Note      string
+	// Member is the household's Mattermost username. The demo never reaches a
+	// chat server, so these are names in a database and nothing more.
+	Member   string
+	Adults   int
+	Children int
+	Diet     store.Diet
+	Note     string
 	// Standing says which evenings this household eats by default: an empty
 	// list means they answer one dinner at a time.
 	Standing []time.Weekday
 }
 
-// The cast is fictional, and the addresses use the reserved example.com domain
-// so nothing can accidentally be mailed to a real person.
+// The cast is fictional. The demo runs with the bot switched off, so none of
+// these usernames is ever looked up or written to.
 var households = []household{
-	{Name: "Anna Andersson", Apartment: "1403", Email: "anna@example.com",
+	{Name: "Anna Andersson", Apartment: "1403", Member: "anna.andersson",
 		Adults: 2, Children: 2, Diet: store.DietOmnivore,
 		Note:     "ett barn tål inte gluten",
 		Standing: []time.Weekday{time.Tuesday, time.Thursday}},
-	{Name: "Bo Bengtsson", Apartment: "0702", Email: "bo@example.com",
+	{Name: "Bo Bengtsson", Apartment: "0702", Member: "bo.bengtsson",
 		Adults: 1, Diet: store.DietVegetarian,
 		Standing: []time.Weekday{time.Tuesday}},
-	{Name: "Cecilia Dahl", Apartment: "1201", Email: "cecilia@example.com",
+	{Name: "Cecilia Dahl", Apartment: "1201", Member: "cecilia.dahl",
 		Adults: 2, Children: 1, Diet: store.DietVegan,
 		Note:     "inga nötter, tack",
 		Standing: []time.Weekday{time.Thursday}},
-	{Name: "David Ek", Apartment: "0304", Email: "david@example.com",
+	{Name: "David Ek", Apartment: "0304", Member: "david.ek",
 		Adults: 1, Diet: store.DietPescetarian},
-	{Name: "Elin Forsberg", Apartment: "0508", Email: "elin@example.com",
+	{Name: "Elin Forsberg", Apartment: "0508", Member: "elin.forsberg",
 		Adults: 2, Children: 3, Diet: store.DietVegetarian,
 		Standing: []time.Weekday{time.Tuesday, time.Thursday}},
-	{Name: "Farid Hassan", Apartment: "1105", Email: "farid@example.com",
+	{Name: "Farid Hassan", Apartment: "1105", Member: "farid.hassan",
 		Adults: 2, Diet: store.DietFlexitarian, Note: "fläskfritt"},
-	{Name: "Greta Lind", Apartment: "0601", Email: "greta@example.com",
+	{Name: "Greta Lind", Apartment: "0601", Member: "greta.lind",
 		Adults: 1, Diet: store.DietVegan,
 		Standing: []time.Weekday{time.Thursday}},
-	{Name: "Hugo Nyström", Apartment: "0907", Email: "hugo@example.com",
+	{Name: "Hugo Nyström", Apartment: "0907", Member: "hugo.nystrom",
 		Adults: 2, Children: 1, Diet: store.DietOmnivore},
-	{Name: "Ingrid Palm", Apartment: "1302", Email: "ingrid@example.com",
+	{Name: "Ingrid Palm", Apartment: "1302", Member: "ingrid.palm",
 		Adults: 1, Diet: store.DietFlexitarian},
-	{Name: "Jonas Rehn", Apartment: "0203", Email: "jonas@example.com",
+	{Name: "Jonas Rehn", Apartment: "0203", Member: "jonas.rehn",
 		Adults: 2, Children: 2, Diet: store.DietOmnivore,
 		Note: "laktosfritt för en vuxen"},
 }
@@ -202,7 +204,7 @@ func Demo(ctx context.Context, st *store.Store, cfg *config.Config, now time.Tim
 	for _, h := range households {
 		for _, wd := range h.Standing {
 			if err := st.SaveStanding(ctx, store.Standing{
-				ID: auth.ID(), Email: h.Email, Weekday: wd, Name: h.Name,
+				ID: auth.ID(), Member: h.Member, Weekday: wd, Name: h.Name,
 				Apartment: h.Apartment, Adults: h.Adults, Children: h.Children,
 				Diet: h.Diet, Note: h.Note,
 				UpdatedAt: now,
@@ -295,7 +297,7 @@ func Demo(ctx context.Context, st *store.Store, cfg *config.Config, now time.Tim
 			continue
 		}
 		if err := st.MarkNotified(ctx, key, "deadline",
-			"demo@example.com", closes); err != nil {
+			"demo.matlag", closes); err != nil {
 			return n, err
 		}
 	}
@@ -304,7 +306,7 @@ func Demo(ctx context.Context, st *store.Store, cfg *config.Config, now time.Tim
 
 func saveReg(ctx context.Context, st *store.Store, date string, h household, now time.Time, adults, children int) error {
 	r := store.Registration{
-		ID: auth.ID(), Date: date, Kind: store.KindMember, Email: h.Email,
+		ID: auth.ID(), Date: date, Kind: store.KindMember, Member: h.Member,
 		Name: h.Name, Apartment: h.Apartment,
 		Adults: adults, Children: children,
 		Token: auth.Token(), CreatedAt: now, UpdatedAt: now,

@@ -35,18 +35,21 @@ type Server struct {
 	rt    config.Runtime
 	store *store.Store
 	guard *auth.Guard
-	// mm is the bot that messages the cooking teams and answers the admin
-	// view's lookups of who is in the house.
+	// mm is the bot that confirms a household's registration, messages the
+	// cooking teams, and answers the pages' lookups of who is in the house.
 	mm  *mattermost.Client
 	log *slog.Logger
-	// members caches the house's Mattermost directory, which the teams page
-	// offers when an administrator names a leader.
+	// members caches the house's Mattermost directory, which the pickers offer
+	// when a household says who it is and when a team is given a leader.
 	members memberCache
 	// tpl holds one parsed set per language. The language is baked into the
 	// template functions, so a page can say {{t "key"}} and get the right
 	// words without every call site passing a language around.
 	tpl map[i18n.Lang]map[string]*template.Template
-	now func() time.Time
+	// assets maps each file in static/ to a hash of its contents, so a page
+	// can link it by an address that changes whenever the file does.
+	assets map[string]string
+	now    func() time.Time
 }
 
 // pages are the top-level templates. Each is parsed into its own set together
@@ -63,6 +66,17 @@ var layouts = []string{"base.html", "fields.html"}
 // New builds the HTTP server.
 func New(cfg *config.Config, rt config.Runtime, st *store.Store, guard *auth.Guard, mm *mattermost.Client, log *slog.Logger) (*Server, error) {
 	s := &Server{cfg: cfg, rt: rt, store: st, guard: guard, mm: mm, log: log, now: time.Now}
+
+	// The versions have to exist before the templates are parsed: {{asset}}
+	// reads them.
+	static, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		return nil, fmt.Errorf("read the static files: %w", err)
+	}
+	if s.assets, err = assetVersions(static); err != nil {
+		return nil, fmt.Errorf("fingerprint the static files: %w", err)
+	}
+
 	s.tpl = make(map[i18n.Lang]map[string]*template.Template, len(i18n.Langs))
 	for _, lang := range i18n.Langs {
 		set := make(map[string]*template.Template, len(pages))
@@ -115,11 +129,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /gast", s.handleGuestSave)
 	mux.HandleFunc("GET /gast/{token}", s.handleGuestEdit)
 	mux.HandleFunc("POST /gast/{token}", s.handleGuestUpdate)
+	// A guest gets no message from us at all, so the evening is handed to
+	// their calendar from their own page, behind their own token.
+	mux.HandleFunc("GET /gast/{token}/kalender.ics", s.handleGuestICS)
 
 	// The printable list is reachable both by a logged-in member and by the
 	// signed link sent to the cooking-team leader, so it does its own check.
 	mux.HandleFunc("GET /middag/{date}/lista", s.handleList)
 	mux.HandleFunc("GET /middag/{date}/lista.csv", s.handleListCSV)
+
+	// Who is in the house, for the pickers on the identity form and in the
+	// admin view. Behind the house password, like the pages that use it.
+	mux.Handle("GET /medlemmar", s.member(s.handleMembers))
 
 	mux.Handle("GET /jagar", s.member(s.handleIdentityForm))
 	mux.Handle("POST /jagar", s.member(s.handleIdentitySave))
@@ -127,19 +148,20 @@ func (s *Server) Handler() http.Handler {
 
 	mux.Handle("GET /{$}", s.identified(s.handleIndex))
 	mux.Handle("GET /middag/{date}", s.identified(s.handleDinner))
+	mux.Handle("GET /middag/{date}/kalender.ics", s.member(s.handleDinnerICS))
 	mux.Handle("POST /middag/{date}", s.identified(s.handleRegister))
 	mux.Handle("GET /mina", s.identified(s.handleMine))
 	mux.Handle("POST /stadigvarande", s.identified(s.handleStanding))
 
 	mux.Handle("GET /admin", s.admin(s.handleAdmin))
 	mux.Handle("POST /admin/lag", s.admin(s.handleAdminTeam))
+	mux.Handle("POST /admin/lag/alla", s.admin(s.handleAdminTeams))
 	mux.Handle("POST /admin/sasong", s.admin(s.handleAdminSeason))
 	mux.Handle("POST /admin/lag/ordning", s.admin(s.handleAdminOrder))
 	mux.Handle("POST /admin/uppehall", s.admin(s.handleAdminBreak))
 	mux.Handle("POST /admin/schema", s.admin(s.handleAdminSchedule))
 	mux.Handle("POST /admin/installningar", s.admin(s.handleAdminSettings))
 	mux.Handle("POST /admin/skicka", s.admin(s.handleAdminSend))
-	mux.Handle("GET /admin/mattermost", s.admin(s.handleAdminMembers))
 	mux.Handle("POST /admin/anmalan", s.admin(s.handleAdminDeleteRegistration))
 	mux.Handle("GET /admin/export.csv", s.admin(s.handleAdminCSV))
 
@@ -235,10 +257,9 @@ func (s *Server) member(h func(http.ResponseWriter, *http.Request, *view)) http.
 }
 
 // identified additionally insists that the member has said who they are. The
-// e-mail address is the identifier every registration hangs on, so there is
-// nothing useful to show before it is known. It is the household's own
-// identifier and has nothing to do with the cooking teams' Mattermost
-// usernames, which are how the site reaches a leader.
+// Mattermost account is the identifier every registration hangs on, and it is
+// where the confirmation goes, so there is nothing useful to show before it is
+// known.
 func (s *Server) identified(h func(http.ResponseWriter, *http.Request, *view)) http.Handler {
 	return s.member(func(w http.ResponseWriter, r *http.Request, v *view) {
 		if !v.Ident.Known() {
@@ -402,6 +423,7 @@ func (s *Server) funcs(lang i18n.Lang) template.FuncMap {
 		},
 		"dict":      dict,
 		"hasPrefix": strings.HasPrefix,
+		"asset":     s.asset,
 	}
 }
 
@@ -426,13 +448,6 @@ func securityHeaders(next http.Handler) http.Handler {
 		// Everything is served from this origin; no external scripts or styles.
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
-		next.ServeHTTP(w, r)
-	})
-}
-
-func cacheStatic(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "public, max-age=3600")
 		next.ServeHTTP(w, r)
 	})
 }
