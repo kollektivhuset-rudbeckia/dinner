@@ -134,6 +134,27 @@ var guests = []struct {
 	{"Sam Ali", "Hugo Nyström", store.DietPescetarian, "allergisk mot skaldjur"},
 }
 
+// regulars are friends and family of the house who eat here every week without
+// being in its Mattermost: one already approved, so the lists show what that
+// looks like, and one still waiting, so the admin view has a request in the
+// queue. The waiting one names nobody in the house, which is the other case an
+// administrator has to judge.
+var regulars = []struct {
+	Name     string
+	Host     string
+	Adults   int
+	Children int
+	Diet     store.Diet
+	Note     string
+	Weekdays []time.Weekday
+	Status   store.Status
+}{
+	{"Tove Kihlberg", "Cecilia Dahl", 1, 0, store.DietVegan, "",
+		[]time.Weekday{time.Thursday}, store.StatusApproved},
+	{"Rune Ahlberg", "", 2, 0, store.DietOmnivore, "inga svampar",
+		[]time.Weekday{time.Tuesday, time.Thursday}, store.StatusPending},
+}
+
 // demoTeams are made up, and so are their usernames and leaders: the demo
 // never reaches a chat server, so it writes the names a lookup would otherwise
 // have brought back, and nobody is to be messaged from it by accident.
@@ -208,6 +229,25 @@ func Demo(ctx context.Context, st *store.Store, cfg *config.Config, now time.Tim
 				Apartment: h.Apartment, Adults: h.Adults, Children: h.Children,
 				Diet: h.Diet, Note: h.Note,
 				UpdatedAt: now,
+			}); err != nil {
+				return 0, err
+			}
+		}
+	}
+
+	// The regulars. One request per person, however many evenings it covers,
+	// which is what an administrator says yes or no to in one go.
+	for _, g := range regulars {
+		token := auth.Token()
+		for _, wd := range g.Weekdays {
+			if err := st.SaveStanding(ctx, store.Standing{
+				ID: auth.ID(), Kind: store.KindGuest, Token: token, Weekday: wd,
+				Name: g.Name, Host: g.Host,
+				Adults: g.Adults, Children: g.Children,
+				Diet: g.Diet, Note: g.Note, Status: g.Status,
+				// Long in force, so the approved one is on the lists that have
+				// already gone out rather than only the evenings to come.
+				CreatedAt: now.AddDate(0, 0, -30), UpdatedAt: now.AddDate(0, 0, -30),
 			}); err != nil {
 				return 0, err
 			}

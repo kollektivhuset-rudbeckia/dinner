@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -953,5 +954,247 @@ func TestMigrationFromTheTeamLeaderAddresses(t *testing.T) {
 	teams, _ = again.Teams(ctx)
 	if len(teams) != 2 || teams[0].LeaderUsername != "anna.andersson" {
 		t.Errorf("teams after reopening = %+v", teams)
+	}
+}
+
+// ------------------------------------------------------- regular guests --
+
+// standing builds a regular guest's row for one weekday of one request.
+func guestStanding(token string, wd time.Weekday, name string, adults int) Standing {
+	return Standing{
+		ID: "id-" + token + "-" + wd.String(), Kind: KindGuest, Token: token,
+		Weekday: wd, Name: name, Host: "Anna Andersson", Adults: adults,
+		Diet: DietOmnivore, Status: StatusPending, CreatedAt: now, UpdatedAt: now,
+	}
+}
+
+func TestARegularsRequestIsOneThingFoundByItsLink(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+	for _, wd := range []time.Weekday{time.Tuesday, time.Thursday} {
+		if err := st.SaveStanding(ctx, guestStanding("tok", wd, "Kalle", 2)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A household's own, on one of the same evenings, is a separate thing.
+	if err := st.SaveStanding(ctx, Standing{
+		ID: "s1", Member: "anna.andersson", Weekday: time.Tuesday,
+		Name: "Anna", Adults: 2, Diet: DietOmnivore, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := st.StandingByToken(ctx, "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("StandingByToken = %d rows, want one per evening asked for", len(rows))
+	}
+	if rows[0].Host != "Anna Andersson" || rows[0].Kind != KindGuest {
+		t.Errorf("stored %+v", rows[0])
+	}
+	if rows[0].Counts() {
+		t.Error("a request nobody has agreed to must not count")
+	}
+
+	// One request, however many evenings it covers.
+	if n, err := st.PendingStandingCount(ctx); err != nil || n != 1 {
+		t.Errorf("PendingStandingCount = %d (%v), want 1", n, err)
+	}
+	if waiting, _ := st.PendingStanding(ctx); len(waiting) != 2 {
+		t.Errorf("PendingStanding = %d rows, want both evenings", len(waiting))
+	}
+	// And the household's own is neither in the queue nor found by a link.
+	if list, _ := st.StandingByMember(ctx, "anna.andersson"); len(list) != 1 {
+		t.Errorf("the household's own standing registration = %+v", list)
+	}
+
+	approved := now.Add(48 * time.Hour)
+	if err := st.ApproveStanding(ctx, "tok", approved); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ = st.StandingByToken(ctx, "tok")
+	for _, row := range rows {
+		if !row.Counts() {
+			t.Errorf("%s should count once approved", row.Weekday)
+		}
+		// The approval is what decides which evenings it was in force for, so
+		// it is the moment the row is dated from.
+		if !row.UpdatedAt.Equal(approved) {
+			t.Errorf("UpdatedAt = %s, want the approval at %s", row.UpdatedAt, approved)
+		}
+		if !row.CreatedAt.Equal(now) {
+			t.Errorf("CreatedAt = %s, want when it was asked for", row.CreatedAt)
+		}
+	}
+	if n, _ := st.PendingStandingCount(ctx); n != 0 {
+		t.Errorf("nothing should be waiting any more, got %d", n)
+	}
+
+	// Withdrawing takes the whole request with it, and nothing else.
+	if err := st.DeleteStandingByToken(ctx, "tok"); err != nil {
+		t.Fatal(err)
+	}
+	if rows, _ := st.StandingByToken(ctx, "tok"); len(rows) != 0 {
+		t.Errorf("the request should be gone, got %+v", rows)
+	}
+	if list, _ := st.StandingByMember(ctx, "anna.andersson"); len(list) != 1 {
+		t.Error("the household's own standing registration was taken with it")
+	}
+	if err := st.DeleteStandingByToken(ctx, "tok"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("withdrawing twice = %v, want ErrNotFound", err)
+	}
+}
+
+// The old unique index was over (member, weekday), which two regular guests —
+// who have no account between them — would have collided on.
+func TestTwoRegularsCanEatOnTheSameEvening(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+	for _, who := range []struct{ token, name string }{{"a", "Kalle"}, {"b", "Stina"}} {
+		if err := st.SaveStanding(ctx, guestStanding(who.token, time.Tuesday, who.name, 1)); err != nil {
+			t.Fatalf("%s: %v", who.name, err)
+		}
+	}
+	rows, err := st.StandingFor(ctx, time.Tuesday)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("StandingFor(Tuesday) = %d rows, want both regulars", len(rows))
+	}
+
+	// A second row for the same evening of the same request is the same row.
+	again := guestStanding("a", time.Tuesday, "Kalle", 4)
+	again.ID = "another-id"
+	if err := st.SaveStanding(ctx, again); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ = st.StandingByToken(ctx, "a")
+	if len(rows) != 1 || rows[0].Adults != 4 {
+		t.Errorf("saving again should have replaced it, got %+v", rows)
+	}
+}
+
+// A regular guest's answer for one evening is an exception to their standing
+// registration, and editing it must not leave two of them behind.
+func TestAnExceptionReplacesTheRegularsEarlierAnswer(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+	first := Registration{
+		ID: "e1", Date: "2026-08-25", Kind: KindGuest, Name: "Kalle",
+		Host: "Anna", Adults: 3, Diet: DietOmnivore, StandingToken: "tok",
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := st.SaveRegistration(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	second.ID, second.Adults = "e2", 0
+	if err := st.SaveRegistration(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+
+	regs, err := st.Registrations(ctx, "2026-08-25")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(regs) != 1 {
+		t.Fatalf("got %d rows, want one answer per evening per regular", len(regs))
+	}
+	if regs[0].ID != "e1" {
+		t.Errorf("ID = %q, want the row to keep its identity", regs[0].ID)
+	}
+	if regs[0].Attending() {
+		t.Error("the later answer said nobody is coming")
+	}
+
+	got, err := st.StandingException(ctx, "2026-08-25", "tok")
+	if err != nil {
+		t.Fatalf("StandingException: %v", err)
+	}
+	if got.ID != "e1" {
+		t.Errorf("StandingException found %+v", got)
+	}
+	// A one-off visitor's registration is not an exception to anything, and an
+	// exception is not reachable by a link it does not have.
+	if _, err := st.StandingException(ctx, "2026-08-25", ""); !errors.Is(err, ErrNotFound) {
+		t.Errorf("an empty link = %v, want ErrNotFound", err)
+	}
+	if _, err := st.RegistrationByToken(ctx, ""); !errors.Is(err, ErrNotFound) {
+		t.Errorf("an empty token = %v, want ErrNotFound", err)
+	}
+}
+
+// The build before this one keyed every standing registration to a Mattermost
+// account and had a unique index to match. A regular guest has no account, so
+// the index has to be narrowed to the households before one can be stored at
+// all.
+func TestMigrationFromStandingRegistrationsWithoutRegulars(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	old, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.Exec(`
+		CREATE TABLE registrations (
+			id TEXT PRIMARY KEY, date TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'member',
+			member TEXT NOT NULL DEFAULT '', mm_user_id TEXT NOT NULL DEFAULT '',
+			name TEXT NOT NULL, apartment TEXT NOT NULL DEFAULT '',
+			host TEXT NOT NULL DEFAULT '',
+			adults INTEGER NOT NULL DEFAULT 0, children INTEGER NOT NULL DEFAULT 0,
+			diet TEXT NOT NULL DEFAULT 'allatare',
+			note TEXT NOT NULL DEFAULT '', token TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+			created_ip TEXT NOT NULL DEFAULT ''
+		);
+		CREATE TABLE standing (
+			id TEXT PRIMARY KEY, member TEXT NOT NULL,
+			mm_user_id TEXT NOT NULL DEFAULT '', weekday INTEGER NOT NULL,
+			name TEXT NOT NULL, apartment TEXT NOT NULL DEFAULT '',
+			adults INTEGER NOT NULL DEFAULT 0, children INTEGER NOT NULL DEFAULT 0,
+			diet TEXT NOT NULL DEFAULT 'allatare',
+			note TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
+		);
+		CREATE UNIQUE INDEX idx_standing ON standing (member, weekday);
+		INSERT INTO standing (id, member, mm_user_id, weekday, name, adults, updated_at)
+		VALUES ('s1', 'anna.andersson', 'u1', 2, 'Anna', 2, '2026-01-01T10:00:00Z');
+	`); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("opening the previous build's database: %v", err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+
+	// The household's own is still there, still counted, and nobody had to
+	// approve it.
+	list, err := st.StandingByMember(ctx, "anna.andersson")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Adults != 2 {
+		t.Fatalf("the household's standing registration = %+v", list)
+	}
+	if !list[0].Counts() {
+		t.Error("what was already in force must not need approving")
+	}
+	if list[0].Guest() {
+		t.Error("what was there is a household's own")
+	}
+
+	// And two regular guests fit on the evening it is on.
+	for _, token := range []string{"a", "b"} {
+		if err := st.SaveStanding(ctx, guestStanding(token, time.Tuesday, "Kalle", 1)); err != nil {
+			t.Fatalf("%s: %v", token, err)
+		}
+	}
+	if rows, _ := st.StandingFor(ctx, time.Tuesday); len(rows) != 3 {
+		t.Errorf("StandingFor(Tuesday) = %d rows, want the household and both regulars", len(rows))
 	}
 }

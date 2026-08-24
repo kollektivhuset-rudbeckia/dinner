@@ -270,6 +270,10 @@ code {
 }
 .auth-card h1 { font-size: 1.4rem; margin-bottom: .2em; }
 .auth-mark { width: 56px; height: 56px; display: block; margin: 0 0 1rem; }
+/* The way in for somebody with no password: its own block under the rule, with
+   the button as its centre of gravity rather than a link inside a sentence. */
+.auth-guest { display: grid; gap: .6rem; justify-items: stretch; text-align: center; }
+.auth-guest p { margin: 0; }
 .stack { display: flex; flex-direction: column; gap: .6rem; margin: 1.5rem 0 1rem; }
 .stack label { font-size: .875rem; color: var(--text-muted); }
 .stack label small { color: var(--text-faint); }
@@ -546,6 +550,7 @@ label { font-size: .85rem; }
 .button.primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
 .button.ghost { background: transparent; }
 .button.small { padding: .35rem .7rem; font-size: .85rem; }
+.button.block { width: 100%; }
 .button.danger { color: var(--danger-text); border-color: var(--danger-bg); background: var(--danger-bg); }
 .button.danger:hover { border-color: var(--danger-text); }
 
@@ -613,6 +618,39 @@ label { font-size: .85rem; }
 	border-color: var(--line); border-bottom-color: var(--bg-soft);
 	font-weight: 500;
 }
+/* How many regular guests are waiting to be let in. It sits on the tab so that
+   an administrator who came to fix a team name still sees the queue. */
+.tab-badge {
+	display: inline-block; min-width: 1.35em; padding: 0 .35em; margin-left: .35em;
+	border-radius: 999px; background: var(--warn-bg); color: var(--warn-text);
+	font-size: .78rem; font-weight: 600; text-align: center;
+}
+
+/* One regular guest's request, laid out to be judged: who they are, who in the
+   house they eat with, what they are asking for, and the two answers. */
+.requests { display: grid; gap: .75rem; }
+.request {
+	display: grid; gap: .75rem; padding: 1rem 1.15rem;
+	border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg);
+}
+.request-who { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.request-what {
+	display: grid; gap: .5rem 1.5rem; margin: 0;
+	grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+}
+.request-what dt { color: var(--text-faint); font-size: .78rem; }
+.request-what dd { margin: 0; font-size: .92rem; }
+.request-actions { display: flex; gap: .5rem; flex-wrap: wrap; margin: 0; }
+
+/* An aside that offers a way on somewhere: the standing arrangement on the
+   guest page, where somebody who comes every week would otherwise fill the
+   same form in every week. */
+.callout {
+	display: grid; gap: .75rem; justify-items: start;
+	padding: 1rem 1.15rem; border: 1px solid var(--line);
+	border-radius: var(--radius); background: var(--bg-soft);
+}
+.callout p { margin: 0; font-size: .92rem; }
 
 .schedule { display: grid; gap: .4rem; }
 .sched-row {

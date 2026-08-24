@@ -1,0 +1,166 @@
+{{define "content"}}
+{{if .Data.Removed}}
+<div class="narrow">
+	<h1>{{t "regular.removed"}}</h1>
+	<p class="muted">{{t "regular.removed.body"}}</p>
+	<p><a class="button" href="/stamgast">{{t "regular.again"}}</a></p>
+</div>
+
+{{else if .Data.Token}}
+{{/* A regular came back to their own arrangement: where it stands, what it
+     says, and the evenings it is about to count them in on. */}}
+<div class="narrow">
+	<div class="hero">
+		<h1>{{t "regular.yours"}}</h1>
+		<p class="lede">
+			{{- if .Data.Pending}}{{t "regular.waiting.body"}}
+			{{- else}}{{t "regular.approved.body" (joinWeekdays .Data.Weekdays)}}{{end}}
+		</p>
+	</div>
+
+	{{if .Data.Saved}}<p class="alert alert-ok" role="status">{{t "regular.saved"}}</p>{{end}}
+	{{with .Data.Error}}<p class="alert alert-error" role="alert">{{.}}</p>{{end}}
+	{{if .Data.Pending}}
+	<p class="alert alert-warn">{{t "regular.waiting" (dateTime .Data.AskedAt)}}</p>
+	{{end}}
+
+	{{/* What the arrangement says, in a box that can be read back. Nothing is
+	     sent to a regular, so this page is the whole record of it. */}}
+	<div class="receipt">
+		<div class="receipt-row"><span>{{t "guest.receipt.name"}}</span><strong>{{.Data.Form.Name}}</strong></div>
+		{{with .Data.Form.Host}}<div class="receipt-row"><span>{{t "guest.receipt.host"}}</span><strong>{{.}}</strong></div>{{end}}
+		<div class="receipt-row"><span>{{t "regular.receipt.evenings"}}</span><strong>{{joinWeekdays .Data.Weekdays}}</strong></div>
+		<div class="receipt-row"><span>{{t "guest.receipt.count"}}</span><strong>
+			{{count "adult" .Data.Form.Adults}}{{if .Data.Form.Children}}, {{count "child" .Data.Form.Children}}{{end}}
+		</strong></div>
+		<div class="receipt-row"><span>{{t "guest.receipt.diet"}}</span><strong>{{dietLabel .Data.Form.Diet}}</strong></div>
+		{{with .Data.Form.Note}}<div class="receipt-row"><span>{{t "guest.receipt.note"}}</span><strong>{{.}}</strong></div>{{end}}
+	</div>
+
+	<p class="summary">{{t "regular.keeplink"}}</p>
+
+	{{if not .Data.Pending}}
+	{{/* One evening at a time: a different number of you this once, or none at
+	     all. This is what a household does from the evening's own page, which a
+	     regular cannot open. */}}
+	<section class="panel">
+		<div class="panel-head"><h2>{{t "regular.evenings"}}</h2></div>
+		{{if .Data.Evenings}}
+		<p class="muted">{{t "regular.evenings.body"}}</p>
+		<div class="standing-grid">
+			{{range .Data.Evenings}}
+			{{$d := .Dinner}}
+			<div class="standing-card{{if .Answered}} is-on{{end}}">
+				<h3>{{titleCase (dateLong $d.Date)}}</h3>
+				<p class="standing-state">
+					{{- if .Skipping}}<strong class="muted">{{t "regular.evening.skipping"}}</strong>
+					{{- else if .Answered}}<strong class="ok-text">{{t "regular.evening.answered"}}</strong> —
+						{{if .Form.Adults}}{{count "adult" .Form.Adults}}{{end}}{{if and .Form.Adults .Form.Children}} {{t "and"}} {{end}}{{if .Form.Children}}{{count "child" .Form.Children}}{{end}},
+						{{dietLabel .Form.Diet}}.
+					{{- else}}<strong>{{t "regular.evening.asusual"}}</strong>{{end}}
+				</p>
+				<details class="standing-edit">
+					<summary>{{t "regular.evening.change"}}</summary>
+					<form method="post" action="/stamgast/{{$.Data.Token}}/kvall">
+						<input type="hidden" name="date" value="{{$d.Key}}">
+						{{template "countfields" dict "Form" .Form "ID" (printf "e%s" $d.Key)
+							"Zero" (t "regular.evening.zero") "Split" (t "form.split.guest")}}
+						<p class="hint">{{t "regular.evening.closes" (dateTime $d.Closes)}}</p>
+						<div class="form-actions">
+							<button type="submit" class="button primary">{{t "guest.savechange"}}</button>
+							<button type="submit" class="button ghost" name="action" value="decline"
+							        formnovalidate>{{t "regular.evening.decline"}}</button>
+							{{if .Answered}}
+							<button type="submit" class="button ghost" name="action" value="clear"
+							        formnovalidate>{{t "regular.evening.reset"}}</button>
+							{{end}}
+						</div>
+					</form>
+				</details>
+			</div>
+			{{end}}
+		</div>
+		{{else}}
+		<p class="empty">{{t "regular.evenings.none"}}</p>
+		{{end}}
+	</section>
+	{{end}}
+
+	<section class="panel form-panel">
+		<div class="panel-head"><h2>{{t "regular.change"}}</h2></div>
+		<p class="muted">{{t "regular.change.body"}}</p>
+		<form method="post" action="/stamgast/{{.Data.Token}}">
+			{{template "regularfields" dict "Form" .Data.Form "ID" "r"}}
+			<div class="form-actions">
+				<button type="submit" class="button primary">{{t "guest.savechange"}}</button>
+				<button type="submit" class="button ghost danger" name="action" value="delete"
+				        formnovalidate data-confirm="{{t "regular.remove.confirm"}}">{{t "regular.remove"}}</button>
+			</div>
+		</form>
+	</section>
+</div>
+
+{{else}}
+{{/* A friend of the house asking to be counted in every week. */}}
+<div class="narrow">
+	<div class="hero">
+		<h1>{{t "regular.title"}}</h1>
+		<p class="lede">{{t "regular.lede" .Site.HouseName}}</p>
+		<p class="muted small">{{t "guest.regular.who"}}</p>
+	</div>
+
+	{{with .Data.Error}}<p class="alert alert-error" role="alert">{{.}}</p>{{end}}
+
+	{{if .Data.Weekdays}}
+	<section class="panel form-panel">
+		<form method="post" action="/stamgast">
+			{{$f := .Data.Form}}
+			<fieldset class="diet">
+				<legend>{{t "regular.which"}}</legend>
+				{{range .Data.Weekdays}}
+				<label class="diet-option">
+					<input type="checkbox" name="weekdays" value="{{weekdayNum .}}"
+					       {{if hasWeekday $f.Weekdays .}}checked{{end}}>
+					<span class="diet-text"><strong>{{titleCase (weekdayPlural .)}}</strong></span>
+				</label>
+				{{end}}
+				<p class="hint">{{t "regular.which.hint"}}</p>
+			</fieldset>
+			{{template "regularfields" dict "Form" $f "ID" "r"}}
+			<p class="summary">{{t "regular.approval.hint"}}</p>
+			<div class="form-actions">
+				<button type="submit" class="button primary">{{t "regular.submit"}}</button>
+			</div>
+		</form>
+	</section>
+	<p class="muted small">{{t "regular.oneoff"}} <a href="/gast">{{t "regular.oneoff.link"}}</a></p>
+	{{else}}
+	<p class="empty">{{t "regular.noseason"}}</p>
+	{{end}}
+</div>
+{{end}}
+{{end}}
+
+{{/* Who the regular is, who they eat with, and how many — the fields that are
+     the same on the request and on their own page afterwards. The evenings are
+     only asked once, on the request: changing which of them you eat on is
+     asking for something else, and goes through an administrator again. */}}
+{{define "regularfields"}}
+{{$f := .Form}}{{$id := .ID}}
+<div class="field-grid">
+	<div class="field">
+		<label for="{{$id}}-name">{{t "guest.yourname"}}</label>
+		<input id="{{$id}}-name" name="name" type="text" required autocomplete="name"
+		       value="{{$f.Name}}" placeholder="Kalle Svensson">
+	</div>
+	<div class="field">
+		<label for="{{$id}}-host">{{t "regular.host"}} <small>{{t "optional"}}</small></label>
+		<input id="{{$id}}-host" name="host" type="text" autocomplete="off"
+		       value="{{$f.Host}}" placeholder="Anna Andersson">
+		<small class="hint">{{t "regular.host.hint"}}</small>
+	</div>
+</div>
+{{template "countfields" dict "Form" $f "ID" $id
+	"Zero" (t "regular.zero") "Split" (t "form.split.guest")}}
+{{end}}
+{{template "base" .}}

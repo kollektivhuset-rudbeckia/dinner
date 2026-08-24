@@ -156,13 +156,21 @@ func (s *Server) handleStanding(w http.ResponseWriter, r *http.Request, v *view)
 	// dinner.Resolve would cut the old standing registration off those
 	// evenings too, and a household that has eaten every Thursday for a year
 	// would vanish from tonight's list by editing next month's.
-	if err := s.keepClosedEvenings(ctx, r, v, wd); err != nil {
-		s.fail(w, r, "keep the closed evenings as they were sent", err)
+	was, err := s.standingFor(ctx, v.Ident.MMUsername, wd)
+	if err != nil {
+		s.fail(w, r, "read the standing registration", err)
 		return
+	}
+	if was != nil {
+		if err := s.freezeClosedEvenings(ctx, s.clientIP(r), *was); err != nil {
+			s.fail(w, r, "keep the closed evenings as they were sent", err)
+			return
+		}
 	}
 
 	err = s.store.SaveStanding(ctx, store.Standing{
 		ID:        auth.ID(),
+		Kind:      store.KindMember,
 		Member:    v.Ident.MMUsername,
 		MMUserID:  v.Ident.MMUserID,
 		Weekday:   wd,
@@ -182,42 +190,56 @@ func (s *Server) handleStanding(w http.ResponseWriter, r *http.Request, v *view)
 	http.Redirect(w, r, "/mina?sparat=1", http.StatusSeeOther)
 }
 
-// keepClosedEvenings writes the household's standing registration down as an
-// answer for each evening on this weekday whose deadline has passed but which
-// is still to come — the evenings the cooking team is already shopping for.
+// standingFor is a household's own default for one weekday, or nil if it has
+// none.
+//
+// Nil is the interesting answer: nothing was in force on that weekday, so no
+// closed evening is counting on anything and there is nothing to freeze. That
+// is the case the deadline used to be got round with — a brand new standing
+// registration — which dinner.Resolve now keeps off the evenings it was too
+// late for.
+func (s *Server) standingFor(ctx context.Context, member string, wd time.Weekday) (*store.Standing, error) {
+	existing, err := s.store.StandingByMember(ctx, member)
+	if err != nil {
+		return nil, err
+	}
+	for i := range existing {
+		if existing[i].Weekday == wd {
+			return &existing[i], nil
+		}
+	}
+	return nil, nil
+}
+
+// freezeClosedEvenings writes a standing registration down as an answer for
+// each evening on its weekday whose deadline has passed but which is still to
+// come — the evenings the cooking team is already shopping for.
 //
 // A standing registration is read live, at the moment a list is drawn up, so
 // on its own it is not a record of anything: changing it changes what those
-// evenings say, and clearing it takes the household off a list it is already
-// counted on. An answer for the date always wins over a standing
+// evenings say, and clearing it takes whoever it belongs to off a list they are
+// already counted on. An answer for the date always wins over a standing
 // registration, so writing one down freezes those evenings exactly as they
 // were sent, and leaves the new values to the evenings still open.
-func (s *Server) keepClosedEvenings(ctx context.Context, r *http.Request, v *view, wd time.Weekday) error {
-	existing, err := s.store.StandingByMember(ctx, v.Ident.MMUsername)
-	if err != nil {
-		return err
-	}
-	var was *store.Standing
-	for i := range existing {
-		if existing[i].Weekday == wd {
-			was = &existing[i]
-		}
-	}
-	if was == nil {
-		// Nothing was in force on this weekday, so no closed evening is
-		// counting on anything. This is the case the deadline was being got
-		// round: a brand new standing registration, which dinner.Resolve now
-		// keeps off the evenings it was too late for.
+//
+// It holds for a regular guest's standing registration exactly as it does for
+// a household's — a friend of the house who is on tonight's list must not drop
+// off it by being revoked tomorrow — with only the way the answer is tied back
+// to the standing registration differing. Theirs names its token, because they
+// have no account to be found by.
+func (s *Server) freezeClosedEvenings(ctx context.Context, ip string, was store.Standing) error {
+	// A request nobody agreed to was never on any list, so there is nothing
+	// about it to keep.
+	if !was.Counts() {
 		return nil
 	}
-
 	world, err := s.world(ctx)
 	if err != nil {
 		return err
 	}
 	now := s.now()
 	for _, d := range world.Schedule.Dinners {
-		if d.Weekday() != wd || !d.Closed(now) {
+		if d.Weekday() != was.Weekday || !d.Closed(now) {
 			continue
 		}
 		// The old standing registration has to have been in force for this
@@ -226,35 +248,62 @@ func (s *Server) keepClosedEvenings(ctx context.Context, r *http.Request, v *vie
 		if !was.UpdatedAt.Before(d.Closes) {
 			continue
 		}
-		// An answer already given for the date is the household's own word on
-		// the evening, and outranks anything derived from a standing one.
-		if _, err := s.store.MemberRegistration(ctx, d.Key, was.Member); err == nil {
-			continue
-		} else if !errors.Is(err, store.ErrNotFound) {
+		// An answer already given for the date is their own word on the
+		// evening, and outranks anything derived from a standing one.
+		answered, err := s.answeredFor(ctx, d.Key, was)
+		if err != nil {
 			return err
 		}
-		err = s.store.SaveRegistration(ctx, store.Registration{
+		if answered {
+			continue
+		}
+		reg := store.Registration{
 			ID:        auth.ID(),
 			Date:      d.Key,
-			Kind:      store.KindMember,
+			Kind:      was.Kind,
 			Member:    was.Member,
 			MMUserID:  was.MMUserID,
 			Name:      was.Name,
 			Apartment: was.Apartment,
+			Host:      was.Host,
 			Adults:    was.Adults,
 			Children:  was.Children,
 			Diet:      was.Diet,
 			Note:      was.Note,
-			Token:     auth.Token(),
 			CreatedAt: now, UpdatedAt: now,
-			CreatedIP: s.clientIP(r),
-		})
-		if err != nil {
+			CreatedIP: ip,
+		}
+		if was.Guest() {
+			// The frozen row is history, reachable from nobody's link: it is
+			// what the cooking team was given, not something still to change.
+			reg.StandingToken = was.Token
+		} else {
+			reg.Token = auth.Token()
+		}
+		if err := s.store.SaveRegistration(ctx, reg); err != nil {
 			return err
 		}
 		s.log.Info("kept a closed evening as the cooking team was given it",
-			"date", d.Key, "member", was.Member,
-			"people", was.Adults+was.Children)
+			"date", d.Key, "kind", string(was.Kind), "member", was.Member,
+			"name", was.Name, "people", was.Adults+was.Children)
 	}
 	return nil
+}
+
+// answeredFor reports whether an answer for one evening has already been given
+// by whoever this standing registration belongs to.
+func (s *Server) answeredFor(ctx context.Context, date string, was store.Standing) (bool, error) {
+	var err error
+	if was.Guest() {
+		_, err = s.store.StandingException(ctx, date, was.Token)
+	} else {
+		_, err = s.store.MemberRegistration(ctx, date, was.Member)
+	}
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, store.ErrNotFound):
+		return false, nil
+	}
+	return false, err
 }

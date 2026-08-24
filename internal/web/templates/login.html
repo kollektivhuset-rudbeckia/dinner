@@ -20,10 +20,16 @@
 		<p class="muted small">{{t "login.where"}}</p>
 		{{end}}
 		{{if .GuestOpen}}
+		{{/* A guest has no password and never will have one, so the way in for
+		     them is a button of its own rather than a sentence under the form
+		     with a link buried in it. It is the second thing on this page, not
+		     the last. */}}
 		<hr class="rule">
-		<p class="small muted">
-			{{t "login.guest"}} <a href="/gast">{{t "login.guest.link"}}</a> {{t "login.guest.tail"}}
-		</p>
+		<div class="auth-guest">
+			<p class="small muted">{{t "login.guest"}} {{t "login.guest.tail"}}</p>
+			<a class="button block" href="/gast">{{t "login.guest.link"}}</a>
+			<p class="small muted">{{t "login.regular"}} <a href="/stamgast">{{t "login.regular.link"}}</a></p>
+		</div>
 		{{end}}
 	</div>
 </div>

@@ -261,3 +261,145 @@ func TestAStandingRegistrationSavedExactlyAtTheDeadlineIsTooLate(t *testing.T) {
 		t.Errorf("People = %d, want 2 — a second inside the deadline is in time", sum.People)
 	}
 }
+
+// -------------------------------------------------------- regular guests --
+
+// regular is an approved regular guest's standing registration: a friend of the
+// house who is counted in every Tuesday without having an account here.
+func regular(token, name, host string, adults, children int, diet store.Diet) store.Standing {
+	return store.Standing{
+		ID: "sg-" + token, Kind: store.KindGuest, Token: token,
+		Weekday: time.Tuesday, Name: name, Host: host,
+		Adults: adults, Children: children, Diet: diet,
+		Status:    store.StatusApproved,
+		UpdatedAt: testCloses.AddDate(0, -1, 0),
+	}
+}
+
+// exception is what a regular says about one evening instead.
+func exception(token, name, host string, adults, children int, diet store.Diet) store.Registration {
+	return store.Registration{
+		ID: "eg-" + token, Date: "2026-08-25", Kind: store.KindGuest,
+		Name: name, Host: host, Adults: adults, Children: children,
+		Diet: diet, StandingToken: token,
+	}
+}
+
+func TestAnApprovedRegularIsCountedAsAGuestOnAStandingRegistration(t *testing.T) {
+	sum := resolve(nil, []store.Standing{
+		regular("t1", "Kalle", "Anna", 2, 1, store.DietVegan),
+	})
+	if sum.People != 3 {
+		t.Fatalf("People = %d, want 3", sum.People)
+	}
+	if sum.Guests != 3 {
+		t.Errorf("Guests = %d, want the regular counted as a visitor", sum.Guests)
+	}
+	if len(sum.Attendees) != 1 {
+		t.Fatalf("attendees = %+v", sum.Attendees)
+	}
+	got := sum.Attendees[0]
+	if !got.Guest || !got.Standing {
+		t.Errorf("the cooking team should see both that they are a guest and that "+
+			"they did not register: %+v", got)
+	}
+	if got.Host != "Anna" {
+		t.Errorf("Host = %q, want the household they eat with", got.Host)
+	}
+	if got.Member != "" {
+		t.Errorf("Member = %q, want none — a regular has no account", got.Member)
+	}
+	if sum.Count(store.DietVegan) != 3 {
+		t.Errorf("vegan portions = %d, want 3", sum.Count(store.DietVegan))
+	}
+}
+
+// Nobody has agreed to it, so it is a request and not a rule. This is the whole
+// difference between a regular and a household, and it fails closed: a status
+// that says nothing is not an approval.
+func TestARegularNobodyHasApprovedIsNotCounted(t *testing.T) {
+	waiting := regular("t1", "Kalle", "Anna", 2, 0, store.DietOmnivore)
+	waiting.Status = store.StatusPending
+	if sum := resolve(nil, []store.Standing{waiting}); sum.People != 0 {
+		t.Errorf("People = %d, want 0 while the request is waiting", sum.People)
+	}
+
+	unsaid := regular("t2", "Stina", "Bo", 2, 0, store.DietOmnivore)
+	unsaid.Status = ""
+	if sum := resolve(nil, []store.Standing{unsaid}); sum.People != 0 {
+		t.Errorf("People = %d, want 0 — a row that says nothing was approved by nobody",
+			sum.People)
+	}
+
+	// A household's own needs nobody's permission, and one built without a
+	// status is still a household's own.
+	if sum := resolve(nil, []store.Standing{standing("anna", "Anna", 2, 0, store.DietOmnivore)}); sum.People != 2 {
+		t.Errorf("People = %d, want 2 — a household approves its own", sum.People)
+	}
+}
+
+// A regular has no account, so what ties their answer for one evening to their
+// standing registration is the link, and it has to beat it exactly as a
+// household's own answer does.
+func TestARegularsAnswerForTheEveningWinsOverTheirStandingOne(t *testing.T) {
+	reg := regular("t1", "Kalle", "Anna", 2, 0, store.DietOmnivore)
+
+	sum := resolve(
+		[]store.Registration{exception("t1", "Kalle", "Anna", 4, 1, store.DietVegan)},
+		[]store.Standing{reg},
+	)
+	if sum.People != 5 {
+		t.Errorf("People = %d, want 5 — the evening's own answer", sum.People)
+	}
+	if sum.Households != 1 {
+		t.Errorf("Households = %d, want 1 — not the standing one as well", sum.Households)
+	}
+
+	// And an answer for nobody is how they sit one evening out.
+	sum = resolve(
+		[]store.Registration{exception("t1", "Kalle", "Anna", 0, 0, store.DietOmnivore)},
+		[]store.Standing{reg},
+	)
+	if sum.People != 0 {
+		t.Errorf("People = %d, want 0", sum.People)
+	}
+	if len(sum.Declined) != 1 {
+		t.Errorf("the cooking team should see the answer was given: %+v", sum.Declined)
+	}
+}
+
+// Two regulars with no accounts between them are two different people, and a
+// one-off visitor's registration is nobody's exception.
+func TestRegularsAreToldApartByTheirOwnLinks(t *testing.T) {
+	sum := resolve(
+		[]store.Registration{
+			// A visitor who just registered for this evening, and an exception
+			// belonging to one of the two regulars.
+			guest("Stina", "Bo", 1, 0, store.DietOmnivore, ""),
+			exception("t1", "Kalle", "Anna", 1, 0, store.DietOmnivore),
+		},
+		[]store.Standing{
+			regular("t1", "Kalle", "Anna", 2, 0, store.DietOmnivore),
+			regular("t2", "Doris", "Cecilia", 3, 0, store.DietOmnivore),
+		},
+	)
+	// Kalle's one, Stina's one, and Doris's three, still on her own standing
+	// registration.
+	if sum.People != 5 {
+		t.Errorf("People = %d, want 5: %+v", sum.People, sum.Attendees)
+	}
+	if sum.Households != 3 {
+		t.Errorf("Households = %d, want 3", sum.Households)
+	}
+}
+
+// Approval is what dates a regular's standing registration, so a request agreed
+// to after the deadline belongs to the evenings after it.
+func TestARegularApprovedAfterTheDeadlineIsNotOnTheListAlreadySent(t *testing.T) {
+	late := regular("t1", "Kalle", "Anna", 2, 0, store.DietOmnivore)
+	late.UpdatedAt = testCloses.Add(time.Minute)
+	if sum := resolve(nil, []store.Standing{late}); sum.People != 0 {
+		t.Errorf("People = %d, want 0 — the list had gone out when it was approved",
+			sum.People)
+	}
+}

@@ -31,6 +31,21 @@ const (
 	KindGuest  Kind = "guest"
 )
 
+// Status says whether a standing registration may be counted yet.
+//
+// A household's own standing registration needs nobody's permission: it got
+// through the house password and named a Mattermost account, so the house
+// already knows who it is. A regular guest is the other case — a friend of the
+// house who eats here every week without being in the chat at all — and there
+// is nothing behind their word but the form they filled in. Theirs waits for
+// the cooking teams' administrator to agree to it.
+type Status string
+
+const (
+	StatusPending  Status = "pending"
+	StatusApproved Status = "approved"
+)
+
 // Diet is what a registration eats. One choice covers everyone in it: a
 // household that needs two different meals makes two registrations rather than
 // splitting one, which keeps the cooking team's totals a simple sum.
@@ -92,9 +107,15 @@ type Registration struct {
 	Diet      Diet
 	Note      string
 	Token     string
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	CreatedIP string
+	// StandingToken names the standing registration this answer is an
+	// exception to, and is only ever set on a guest's. A household's
+	// exceptions are found by its account; a regular guest has no account, so
+	// without this the answer for the evening and the standing registration
+	// behind it would be counted as two separate parties.
+	StandingToken string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	CreatedIP     string
 }
 
 // People is how many will eat.
@@ -111,17 +132,59 @@ func (r Registration) Guest() bool { return r.Kind == KindGuest }
 // specific date always wins over it.
 type Standing struct {
 	ID string
-	// Member is the household's Mattermost username, as on a registration.
-	Member    string
-	MMUserID  string
-	Weekday   time.Weekday
-	Name      string
+	// Kind separates a household in the house from a regular guest: a friend
+	// of the house who eats here every week without being in the chat.
+	Kind Kind
+	// Member is the household's Mattermost username, as on a registration. A
+	// regular guest has none, and is found by their token instead.
+	Member   string
+	MMUserID string
+	// Token is a regular guest's own link, the way it is for a guest's
+	// one-off registration: the whole relationship, kept by the guest. Every
+	// weekday of one request shares it, so the request is approved, changed
+	// and withdrawn as the one thing the guest asked for.
+	Token   string
+	Weekday time.Weekday
+	Name    string
+	// Apartment is the household's door; Host is the member a regular guest
+	// eats with, which is who the administrator asks before approving.
 	Apartment string
+	Host      string
 	Adults    int
 	Children  int
 	Diet      Diet
 	Note      string
+	// Status is whether this may be counted; see Status.
+	Status Status
+	// CreatedAt is when it was first asked for, which is what the
+	// administrator sorts a queue of requests by. UpdatedAt is when it last
+	// became what it now says — the approval, for a guest's — and is what
+	// decides which evenings it was in force for.
+	CreatedAt time.Time
 	UpdatedAt time.Time
+	CreatedIP string
+}
+
+// Guest reports whether this is a regular guest's standing registration rather
+// than a household's own.
+func (st Standing) Guest() bool { return st.Kind == KindGuest }
+
+// Pending reports whether this is still waiting to be approved.
+func (st Standing) Pending() bool { return st.Status == StatusPending }
+
+// Counts reports whether this standing registration may be added to a cooking
+// team's list at all.
+//
+// A household's own counts: it named an account behind the house password, and
+// nothing more is asked of it. A regular guest's counts only once it has been
+// approved outright — a status that says nothing at all is not an approval,
+// so a row that reached the table by some other road is left off the list
+// rather than quietly fed.
+func (st Standing) Counts() bool {
+	if st.Kind == KindGuest {
+		return st.Status == StatusApproved
+	}
+	return st.Status != StatusPending
 }
 
 // Team is a cooking team. The leader is who receives the direct message with
@@ -265,6 +328,7 @@ CREATE TABLE IF NOT EXISTS registrations (
 	diet        TEXT NOT NULL DEFAULT 'allatare',
 	note        TEXT NOT NULL DEFAULT '',
 	token       TEXT NOT NULL DEFAULT '',
+	standing_token TEXT NOT NULL DEFAULT '',
 	created_at  TEXT NOT NULL,
 	updated_at  TEXT NOT NULL,
 	created_ip  TEXT NOT NULL DEFAULT ''
@@ -276,21 +340,39 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_reg_member
 CREATE INDEX IF NOT EXISTS idx_reg_date ON registrations (date);
 CREATE INDEX IF NOT EXISTS idx_reg_household ON registrations (member, date);
 CREATE INDEX IF NOT EXISTS idx_reg_token ON registrations (token);
+-- A regular guest's answer for one evening, found from the standing
+-- registration it overrides.
+CREATE INDEX IF NOT EXISTS idx_reg_standing ON registrations (standing_token, date);
 
 CREATE TABLE IF NOT EXISTS standing (
 	id          TEXT PRIMARY KEY,
+	kind        TEXT NOT NULL DEFAULT 'member',
 	member      TEXT NOT NULL,
 	mm_user_id  TEXT NOT NULL DEFAULT '',
+	token       TEXT NOT NULL DEFAULT '',
 	weekday     INTEGER NOT NULL,
 	name        TEXT NOT NULL,
 	apartment   TEXT NOT NULL DEFAULT '',
+	host        TEXT NOT NULL DEFAULT '',
 	adults      INTEGER NOT NULL DEFAULT 0,
 	children    INTEGER NOT NULL DEFAULT 0,
 	diet        TEXT NOT NULL DEFAULT 'allatare',
 	note        TEXT NOT NULL DEFAULT '',
-	updated_at  TEXT NOT NULL
+	status      TEXT NOT NULL DEFAULT 'approved',
+	created_at  TEXT NOT NULL DEFAULT '',
+	updated_at  TEXT NOT NULL,
+	created_ip  TEXT NOT NULL DEFAULT ''
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_standing ON standing (member, weekday);
+-- One default per household per weekday. A regular guest is not covered by
+-- this one: they have no account here, and two of them may well eat on the
+-- same evening.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_standing
+	ON standing (member, weekday) WHERE kind = 'member' AND member <> '';
+-- One default per weekday per request, so a guest asking for Tuesdays and
+-- Thursdays gets one row each and not two of either.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_standing_guest
+	ON standing (token, weekday) WHERE kind = 'guest';
+CREATE INDEX IF NOT EXISTS idx_standing_token ON standing (token);
 
 -- Which lists have been sent, so a restart cannot send the same one twice.
 CREATE TABLE IF NOT EXISTS notifications (
@@ -341,7 +423,9 @@ func Open(path string) (*Store, error) {
 
 // prepare makes an older database fit for the current schema. It runs before
 // the schema is applied, because the indexes the schema creates name columns
-// that a database from an earlier version does not have yet.
+// that a database from an earlier version does not have yet — and because one
+// index the schema replaces has to be dropped before the narrower one can take
+// its place.
 //
 // Households used to be identified by an e-mail address and are now identified
 // by their Mattermost account. One cannot be turned into the other — an
@@ -411,6 +495,68 @@ func prepare(db *sql.DB) error {
 			if _, err := db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column +
 				` TEXT NOT NULL DEFAULT ''`); err != nil {
 				return fmt.Errorf("add %s.%s: %w", table, column, err)
+			}
+		}
+	}
+
+	// What a regular guest's standing registration needs beyond a household's:
+	// the link that identifies them, who in the house they eat with, and
+	// whether an administrator has agreed to it yet.
+	//
+	// The unique index over (member, weekday) has to go with them. It was
+	// written for a table where every row was a household, and a table that
+	// also holds guests — who have no account, and two of whom may well eat on
+	// the same evening — cannot have it: the schema replaces it with one that
+	// only covers the households. SQLite will not let the index be narrowed in
+	// place, so it is dropped here and created again from the schema.
+	if exists, err := hasTable(db, "standing"); err != nil {
+		return err
+	} else if exists {
+		has, err := hasColumn(db, "standing", "kind")
+		if err != nil {
+			return err
+		}
+		if !has {
+			if _, err := db.Exec(`DROP INDEX IF EXISTS idx_standing`); err != nil {
+				return fmt.Errorf("drop idx_standing: %w", err)
+			}
+		}
+		for _, c := range []struct{ name, def string }{
+			{"kind", `TEXT NOT NULL DEFAULT 'member'`},
+			{"token", `TEXT NOT NULL DEFAULT ''`},
+			{"host", `TEXT NOT NULL DEFAULT ''`},
+			// Everything already in the table is a household's own, which is
+			// nobody's to approve, so the rows that are there are approved.
+			{"status", `TEXT NOT NULL DEFAULT 'approved'`},
+			{"created_at", `TEXT NOT NULL DEFAULT ''`},
+			{"created_ip", `TEXT NOT NULL DEFAULT ''`},
+		} {
+			has, err := hasColumn(db, "standing", c.name)
+			if err != nil {
+				return err
+			}
+			if has {
+				continue
+			}
+			if _, err := db.Exec(`ALTER TABLE standing ADD COLUMN ` + c.name + ` ` + c.def); err != nil {
+				return fmt.Errorf("add standing.%s: %w", c.name, err)
+			}
+		}
+	}
+
+	// And what an answer for one evening needs to be recognised as a regular
+	// guest's exception to their own standing registration.
+	if exists, err := hasTable(db, "registrations"); err != nil {
+		return err
+	} else if exists {
+		has, err := hasColumn(db, "registrations", "standing_token")
+		if err != nil {
+			return err
+		}
+		if !has {
+			if _, err := db.Exec(
+				`ALTER TABLE registrations ADD COLUMN standing_token TEXT NOT NULL DEFAULT ''`); err != nil {
+				return fmt.Errorf("add registrations.standing_token: %w", err)
 			}
 		}
 	}
@@ -903,14 +1049,15 @@ func (s *Store) SaveOverride(ctx context.Context, o Override) error {
 // ---------------------------------------------------------- registrations --
 
 const regCols = `id, date, kind, member, mm_user_id, name, apartment, host,
-	adults, children, diet, note, token, created_at, updated_at, created_ip`
+	adults, children, diet, note, token, standing_token, created_at, updated_at,
+	created_ip`
 
 func scanReg(row interface{ Scan(...any) error }) (Registration, error) {
 	var r Registration
 	var created, updated string
 	err := row.Scan(&r.ID, &r.Date, &r.Kind, &r.Member, &r.MMUserID, &r.Name,
 		&r.Apartment, &r.Host, &r.Adults, &r.Children, &r.Diet, &r.Note, &r.Token,
-		&created, &updated, &r.CreatedIP)
+		&r.StandingToken, &created, &updated, &r.CreatedIP)
 	if err != nil {
 		return r, err
 	}
@@ -979,6 +1126,11 @@ func (s *Store) MemberRegistration(ctx context.Context, date, member string) (Re
 }
 
 // RegistrationByToken finds a guest's own registration from their link.
+//
+// A regular guest's exception for one evening has no link of its own — it is
+// reached from their standing registration's page — so it is deliberately
+// unreachable here, and an empty token finds nothing rather than the first row
+// that happens to have none.
 func (s *Store) RegistrationByToken(ctx context.Context, token string) (Registration, error) {
 	if token == "" {
 		return Registration{}, ErrNotFound
@@ -991,9 +1143,27 @@ func (s *Store) RegistrationByToken(ctx context.Context, token string) (Registra
 	return r, err
 }
 
-// SaveRegistration inserts a registration, or replaces the household's earlier
-// answer for the same dinner. Guests are always inserted; they are identified
-// by their token, not by an account.
+// StandingException returns a regular guest's answer for one evening: what
+// they said instead of what their standing registration says, whether that is
+// different numbers or nobody at all.
+func (s *Store) StandingException(ctx context.Context, date, standingToken string) (Registration, error) {
+	if standingToken == "" {
+		return Registration{}, ErrNotFound
+	}
+	row := s.db.QueryRowContext(ctx, `SELECT `+regCols+` FROM registrations
+		WHERE date = ? AND standing_token = ?`, date, standingToken)
+	r, err := scanReg(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return r, ErrNotFound
+	}
+	return r, err
+}
+
+// SaveRegistration inserts a registration, or replaces the earlier answer for
+// the same dinner from the same quarter: a household is found by its account,
+// and a regular guest by the standing registration this is an exception to. A
+// guest with neither is always inserted; a one-off visitor is identified by
+// their own token and can perfectly well register twice.
 func (s *Store) SaveRegistration(ctx context.Context, r Registration) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1001,18 +1171,27 @@ func (s *Store) SaveRegistration(ctx context.Context, r Registration) error {
 	}
 	defer tx.Rollback()
 
-	if r.Kind == KindMember {
+	// Whichever way this household or guest is recognised, an earlier answer
+	// for the same evening is the same row: keep its identity and its original
+	// timestamp, so an edit does not look like a brand new registration.
+	var (
+		where string
+		key   any
+	)
+	switch {
+	case r.Kind == KindMember:
 		r.Member = Member(r.Member)
-		var id, token string
-		var created string
+		where, key = `member = ? AND kind = 'member'`, r.Member
+	case r.StandingToken != "":
+		where, key = `standing_token = ?`, r.StandingToken
+	}
+	if where != "" {
+		var id, token, created string
 		err := tx.QueryRowContext(ctx,
 			`SELECT id, token, created_at FROM registrations
-			 WHERE date = ? AND member = ? AND kind = 'member'`, r.Date, r.Member).
-			Scan(&id, &token, &created)
+			 WHERE date = ? AND `+where, r.Date, key).Scan(&id, &token, &created)
 		switch {
 		case err == nil:
-			// Keep the row's identity and its original timestamp, so an edit
-			// does not look like a brand new registration.
 			r.ID, r.Token = id, token
 			if t, err := parseTime(created); err == nil {
 				r.CreatedAt = t
@@ -1024,14 +1203,15 @@ func (s *Store) SaveRegistration(ctx context.Context, r Registration) error {
 	}
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO registrations (`+regCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		`INSERT INTO registrations (`+regCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   mm_user_id=excluded.mm_user_id,
 		   name=excluded.name, apartment=excluded.apartment, host=excluded.host,
 		   adults=excluded.adults, children=excluded.children,
-		   diet=excluded.diet, note=excluded.note, updated_at=excluded.updated_at`,
+		   diet=excluded.diet, note=excluded.note,
+		   standing_token=excluded.standing_token, updated_at=excluded.updated_at`,
 		r.ID, r.Date, r.Kind, r.Member, r.MMUserID, r.Name, r.Apartment, r.Host,
-		r.Adults, r.Children, r.Diet, r.Note, r.Token,
+		r.Adults, r.Children, r.Diet, r.Note, r.Token, r.StandingToken,
 		utc(r.CreatedAt), utc(r.UpdatedAt), r.CreatedIP)
 	if err != nil {
 		return err
@@ -1057,19 +1237,24 @@ func (s *Store) DeleteRegistration(ctx context.Context, id string) error {
 
 // -------------------------------------------------------------- standing --
 
-const standingCols = `id, member, mm_user_id, weekday, name, apartment,
-	adults, children, diet, note, updated_at`
+const standingCols = `id, kind, member, mm_user_id, token, weekday, name,
+	apartment, host, adults, children, diet, note, status, created_at,
+	updated_at, created_ip`
 
 func scanStanding(row interface{ Scan(...any) error }) (Standing, error) {
 	var st Standing
 	var wd int
-	var updated string
-	err := row.Scan(&st.ID, &st.Member, &st.MMUserID, &wd, &st.Name, &st.Apartment,
-		&st.Adults, &st.Children, &st.Diet, &st.Note, &updated)
+	var created, updated string
+	err := row.Scan(&st.ID, &st.Kind, &st.Member, &st.MMUserID, &st.Token, &wd,
+		&st.Name, &st.Apartment, &st.Host, &st.Adults, &st.Children, &st.Diet,
+		&st.Note, &st.Status, &created, &updated, &st.CreatedIP)
 	if err != nil {
 		return st, err
 	}
 	st.Weekday = time.Weekday(wd)
+	if st.CreatedAt, err = parseTime(created); err != nil {
+		return st, err
+	}
 	st.UpdatedAt, err = parseTime(updated)
 	return st, err
 }
@@ -1091,10 +1276,12 @@ func (s *Store) queryStanding(ctx context.Context, q string, args ...any) ([]Sta
 	return out, rows.Err()
 }
 
-// StandingFor returns every household's standing registration for one weekday.
+// StandingFor returns every standing registration for one weekday — the
+// households' own and the regular guests' alike, approved or not. Which of
+// them may be counted is dinner.Resolve's to say.
 func (s *Store) StandingFor(ctx context.Context, wd time.Weekday) ([]Standing, error) {
 	return s.queryStanding(ctx, `SELECT `+standingCols+` FROM standing
-		WHERE weekday = ? ORDER BY lower(name)`, int(wd))
+		WHERE weekday = ? ORDER BY kind, lower(name)`, int(wd))
 }
 
 // StandingByMember returns one household's standing registrations.
@@ -1103,42 +1290,199 @@ func (s *Store) StandingByMember(ctx context.Context, member string) ([]Standing
 		return nil, nil
 	}
 	return s.queryStanding(ctx, `SELECT `+standingCols+` FROM standing
-		WHERE member = ? ORDER BY weekday`, Member(member))
+		WHERE kind = 'member' AND member = ? ORDER BY weekday`, Member(member))
 }
 
-// AllStanding returns every standing registration, for the admin view.
+// AllStanding returns every standing registration, for the admin view and for
+// resolving a batch of evenings in one query. Requests still waiting to be
+// approved are in it too: what may be counted is decided in one place, by
+// dinner.Resolve, rather than by each query remembering to ask.
 func (s *Store) AllStanding(ctx context.Context) ([]Standing, error) {
 	return s.queryStanding(ctx, `SELECT `+standingCols+` FROM standing
 		ORDER BY lower(name), weekday`)
 }
 
-// SaveStanding writes a household's default for one weekday. A standing
-// registration with nobody in it is meaningless, so it is deleted instead.
+// StandingByToken returns every weekday of one regular guest's request, which
+// is what their own link opens.
+func (s *Store) StandingByToken(ctx context.Context, token string) ([]Standing, error) {
+	if token == "" {
+		return nil, nil
+	}
+	return s.queryStanding(ctx, `SELECT `+standingCols+` FROM standing
+		WHERE token = ? AND kind = 'guest' ORDER BY weekday`, token)
+}
+
+// StandingByID finds one standing registration by its own identifier.
+//
+// It is how the admin view names a regular guest's request without holding
+// their link: that link is the guest's alone, and a page that carried it around
+// would be handing out the one thing they were told to keep.
+func (s *Store) StandingByID(ctx context.Context, id string) (Standing, error) {
+	if id == "" {
+		return Standing{}, ErrNotFound
+	}
+	row := s.db.QueryRowContext(ctx, `SELECT `+standingCols+` FROM standing WHERE id = ?`, id)
+	st, err := scanStanding(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return st, ErrNotFound
+	}
+	return st, err
+}
+
+// PendingStanding returns the regular guests' requests waiting to be approved,
+// oldest first: the queue the administrator works through.
+func (s *Store) PendingStanding(ctx context.Context) ([]Standing, error) {
+	return s.queryStanding(ctx, `SELECT `+standingCols+` FROM standing
+		WHERE kind = 'guest' AND status = ? ORDER BY created_at, weekday`,
+		string(StatusPending))
+}
+
+// PendingStandingCount is how many requests are waiting, for the badge that
+// tells the administrator there is something to look at.
+func (s *Store) PendingStandingCount(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(DISTINCT token) FROM standing
+		 WHERE kind = 'guest' AND status = ?`, string(StatusPending)).Scan(&n)
+	return n, err
+}
+
+// ApproveStanding lets a regular guest's whole request start counting, from
+// the moment it was approved and no earlier.
+//
+// The timestamp matters as much as the status: a standing registration only
+// counts for an evening whose deadline it was already in force for, so a
+// request approved on the Saturday cannot appear on the list the cooking team
+// was given on the Friday.
+func (s *Store) ApproveStanding(ctx context.Context, token string, at time.Time) error {
+	if token == "" {
+		return fmt.Errorf("no request to approve")
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE standing SET status = ?, updated_at = ?
+		 WHERE token = ? AND kind = 'guest'`, string(StatusApproved), utc(at), token)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SaveStanding writes one default for one weekday, whether it is a
+// household's own or a regular guest's. A standing registration with nobody in
+// it is meaningless, so it is deleted instead.
+//
+// Which earlier row this replaces is the one thing that differs: a household
+// is found by its account, a regular guest by the link their request shares.
+// Either way the row keeps its identity, so the conflict the insert has to
+// handle is always the primary key — the unique indexes are left to be what
+// they are best at, a guard rather than a mechanism.
 func (s *Store) SaveStanding(ctx context.Context, st Standing) error {
-	st.Member = Member(st.Member)
-	if st.Member == "" {
-		return fmt.Errorf("a standing registration needs a household")
+	if st.Kind == "" {
+		st.Kind = KindMember
+	}
+	if st.Status == "" {
+		st.Status = StatusApproved
+	}
+	var (
+		where string
+		key   any
+	)
+	switch st.Kind {
+	case KindGuest:
+		if st.Token == "" {
+			return fmt.Errorf("a regular guest's standing registration needs a link")
+		}
+		st.Member, st.MMUserID = "", ""
+		where, key = `token = ? AND kind = 'guest'`, st.Token
+	default:
+		st.Member = Member(st.Member)
+		if st.Member == "" {
+			return fmt.Errorf("a standing registration needs a household")
+		}
+		st.Token, st.Host = "", ""
+		where, key = `member = ? AND kind = 'member'`, st.Member
 	}
 	if st.Adults+st.Children <= 0 {
-		return s.DeleteStanding(ctx, st.Member, st.Weekday)
+		_, err := s.db.ExecContext(ctx,
+			`DELETE FROM standing WHERE `+where+` AND weekday = ?`, key, int(st.Weekday))
+		return err
 	}
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO standing (`+standingCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?)
-		 ON CONFLICT(member, weekday) DO UPDATE SET
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var id, created string
+	err = tx.QueryRowContext(ctx,
+		`SELECT id, created_at FROM standing WHERE `+where+` AND weekday = ?`,
+		key, int(st.Weekday)).Scan(&id, &created)
+	switch {
+	case err == nil:
+		st.ID = id
+		if t, err := parseTime(created); err == nil && !t.IsZero() {
+			st.CreatedAt = t
+		}
+	case errors.Is(err, sql.ErrNoRows):
+	default:
+		return err
+	}
+	if st.CreatedAt.IsZero() {
+		st.CreatedAt = st.UpdatedAt
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO standing (`+standingCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		 ON CONFLICT(id) DO UPDATE SET
 		   mm_user_id=excluded.mm_user_id,
-		   name=excluded.name, apartment=excluded.apartment,
+		   name=excluded.name, apartment=excluded.apartment, host=excluded.host,
 		   adults=excluded.adults, children=excluded.children,
-		   diet=excluded.diet, note=excluded.note, updated_at=excluded.updated_at`,
-		st.ID, st.Member, st.MMUserID, int(st.Weekday), st.Name, st.Apartment,
-		st.Adults, st.Children, st.Diet, st.Note, utc(st.UpdatedAt))
-	return err
+		   diet=excluded.diet, note=excluded.note, status=excluded.status,
+		   updated_at=excluded.updated_at`,
+		st.ID, st.Kind, st.Member, st.MMUserID, st.Token, int(st.Weekday), st.Name,
+		st.Apartment, st.Host, st.Adults, st.Children, st.Diet, st.Note,
+		string(st.Status), utc(st.CreatedAt), utc(st.UpdatedAt), st.CreatedIP)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // DeleteStanding removes a household's default for one weekday.
 func (s *Store) DeleteStanding(ctx context.Context, member string, wd time.Weekday) error {
 	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM standing WHERE member = ? AND weekday = ?`, Member(member), int(wd))
+		`DELETE FROM standing WHERE kind = 'member' AND member = ? AND weekday = ?`,
+		Member(member), int(wd))
 	return err
+}
+
+// DeleteStandingByToken removes a regular guest's whole request: every weekday
+// they asked for. It is one thing the guest asked for and one thing to
+// withdraw, refuse or revoke.
+func (s *Store) DeleteStandingByToken(ctx context.Context, token string) error {
+	if token == "" {
+		return ErrNotFound
+	}
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM standing WHERE token = ? AND kind = 'guest'`, token)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ---------------------------------------------------------- notifications --

@@ -224,7 +224,8 @@ gästlänk. Den som ändå behöver ändra får höra av sig till lagledaren.
 
 En **stående anmälan** är husets gamla permanentlista: fyll i hur ni brukar
 äta en viss veckodag, så räknas ni med varje gång utan att göra något. Den
-slås på och av under **Mina anmälningar**.
+slås på och av under **Mina anmälningar**. Vänner till huset som äter här varje
+vecka utan att vara med i Mattermost kan få en egen — se [Stamgäster](#stamgäster).
 
 En anmälan för en enskild kväll vinner alltid över den stående — även en
 anmälan för noll personer, vilket är precis så man hoppar över en kväll utan
@@ -241,6 +242,48 @@ gästen som förvarar den.
 
 Sidan visar aldrig något om huset — bara gästens egen anmälan, och inte ens
 vilket lag som lagar. Går att stänga av helt under **Inställningar**.
+
+Vägen in för den som inte har lösenord är en **knapp** på inloggningssidan, inte
+en länk nedsänkt i en mening.
+
+### Stamgäster
+
+En **stamgäst** är en vän eller familj till huset som äter här varje vecka utan
+att vara ett av hushållen: ett utfluget barn som kommer hem på torsdagar, en
+förälder i grannhuset, en granne. De finns inte i husets Mattermost och kommer
+kanske aldrig att göra det, så den vanliga stående anmälan är stängd för dem —
+den hänger på ett konto.
+
+I stället ber de om en egen på <https://din-adress/stamgast>: vem de är, vilka
+kvällar det gäller och hur många de blir. De får gärna skriva **vem i huset som
+känner dem**, men måste inte: en stamgäst är inte nödvändigtvis någons besök,
+och att kräva ett namn ger mest påhittade namn. Sedan händer det här:
+
+1. Begäran hamnar i kön under **Administration → Stående anmälningar**, med en
+   siffra på fliken så att den syns även för den som kom in för att göra något
+   annat. Ingenting är räknat ännu.
+2. Matgruppen tittar på den — har gästen skrivit någon i huset är det den de
+   frågar — och trycker **Godkänn** eller **Avslå**. Först då räknas stamgästen
+   med, och bara från nästa kväll vars anmälan fortfarande är öppen.
+3. Efteråt är länken hela relationen, precis som för en vanlig gäst. Där kan
+   stamgästen ändra antal och kosthållning, avanmäla sig från en enskild kväll,
+   eller ta bort sin stående anmälan helt.
+
+Godkännandet är själva poängen, och det enda som behöver vara ett krav. En
+stående anmälan skriver in någon på varje lista härefter, och ett hushåll som
+gör det har åtminstone kommit förbi husets lösenord och pekat ut ett konto som
+huset kan hitta. En stamgäst har gjort ingetdera, så någon i huset säger ja
+först — och kan säga nej igen senare.
+
+Kvällar som matlagen redan fått listan för står kvar som de skickades, vad som
+än händer sedan: en stamgäst som tas bort försvinner från kvällarna som
+fortfarande är öppna, aldrig från maten som redan är handlad. Åt andra hållet
+gäller samma sak — en begäran som godkänns efter att listan gått ut hör till
+kvällarna efter den.
+
+På matlistan syns en stamgäst både som **gäst** och som **stående** — med
+hushållet de äter med om de skrivit ett — så att laget ser vem som knackar på
+dörren utan att ha anmält sig.
 
 ### Matlistan och utskicket
 

@@ -3,6 +3,7 @@ package web
 import (
 	"database/sql"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -49,6 +50,11 @@ var adminTabs = []struct{ ID, Key string }{
 type tab struct {
 	ID   string
 	Name string
+	// Badge is how many things on that tab are waiting to be dealt with. Only
+	// the standing registrations have any: a regular guest's request sits there
+	// until somebody says yes, and a queue nobody is told about is a queue
+	// nobody works through.
+	Badge int
 }
 
 func adminTab(raw string) string {
@@ -60,14 +66,23 @@ func adminTab(raw string) string {
 	return adminTabs[0].ID
 }
 
-// tabsFor names the tabs in the reader's language.
-func tabsFor(lang i18n.Lang) []tab {
+// tabsFor names the tabs in the reader's language, and says how many regular
+// guests are waiting to be let in.
+func tabsFor(lang i18n.Lang, pending int) []tab {
 	out := make([]tab, 0, len(adminTabs))
 	for _, t := range adminTabs {
-		out = append(out, tab{ID: t.ID, Name: i18n.T(lang, t.Key)})
+		entry := tab{ID: t.ID, Name: i18n.T(lang, t.Key)}
+		if t.ID == standingTab {
+			entry.Badge = pending
+		}
+		out = append(out, entry)
 	}
 	return out
 }
+
+// standingTab is the tab the standing registrations and the regular guests'
+// requests live on.
+const standingTab = "staende"
 
 func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request, v *view) {
 	ctx := r.Context()
@@ -129,32 +144,50 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request, v *view) {
 		}
 	}
 
-	var standing []store.Standing
-	if tab == "staende" {
-		standing, err = s.store.AllStanding(ctx)
+	// The badge is on every tab bar, not only the one it belongs to: the whole
+	// point of it is to be seen by an administrator who came to do something
+	// else.
+	waiting, err := s.store.PendingStandingCount(ctx)
+	if err != nil {
+		s.fail(w, r, "count the regular guests waiting", err)
+		return
+	}
+
+	var (
+		households []store.Standing
+		requests   []standingRequest
+		regulars   []standingRequest
+	)
+	if tab == standingTab {
+		standing, err := s.store.AllStanding(ctx)
 		if err != nil {
 			s.fail(w, r, "read standing registrations", err)
 			return
 		}
+		households, requests, regulars = splitStanding(standing, v.Loc)
 	}
 
 	v.Title = i18n.T(v.Lang, "admin.title")
 	v.Data = map[string]any{
 		"Tab":      tab,
-		"Tabs":     tabsFor(v.Lang),
+		"Tabs":     tabsFor(v.Lang, waiting),
 		"Breaks":   world.Breaks,
 		"Settings": world.Settings,
 		"Teams":    world.Teams,
 		"Seasons":  world.Seasons,
 		"Season":   shown,
 		"Rows":     rows,
-		"Standing": standing,
+		"Standing": households,
+		"Requests": requests,
+		"Regulars": regulars,
+		"Waiting":  waiting,
 		"Weekdays": allWeekdays(),
 		// The years the date selectors offer.
-		"Years":    yearOptions(world, v.Now),
-		"GuestURL": s.rt.BaseURL + "/gast",
-		"Saved":    r.URL.Query().Get("sparat"),
-		"ChatOn":   s.mm.Enabled(),
+		"Years":      yearOptions(world, v.Now),
+		"GuestURL":   s.rt.BaseURL + "/gast",
+		"RegularURL": s.rt.BaseURL + "/stamgast",
+		"Saved":      r.URL.Query().Get("sparat"),
+		"ChatOn":     s.mm.Enabled(),
 		// The admin view is where the guest link and the spreadsheet formula
 		// are read off the screen, so it is the right place to say that the
 		// address in them is not the real one.
@@ -163,6 +196,136 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request, v *view) {
 		"NextSeasonOffset": nextRotationOffset(world),
 	}
 	s.render(w, r, http.StatusOK, "admin.html", v)
+}
+
+// standingRequest is one regular guest as the administrator reads them: the
+// person, who in the house they eat with, which evenings they are asking for or
+// already have, and how many of them there are.
+//
+// A request is one row per evening sharing a link, so this is those rows read
+// back as the one thing the guest asked for — which is also the one thing to
+// say yes or no to.
+type standingRequest struct {
+	// ID names the request to the administrator's form. It is one of its rows'
+	// identifiers rather than the link the rows share: that link is the guest's
+	// own, the only thing that lets them change or withdraw the arrangement,
+	// and it has no business being on anybody else's screen.
+	ID       string
+	Name     string
+	Host     string
+	Weekdays []time.Weekday
+	Adults   int
+	Children int
+	Diet     store.Diet
+	Note     string
+	// AskedAt is when the request came in, and Since when it was agreed to.
+	AskedAt time.Time
+	Since   time.Time
+	Pending bool
+}
+
+// People is how many will eat.
+func (r standingRequest) People() int { return r.Adults + r.Children }
+
+// splitStanding sorts every standing registration into the three things the
+// admin view shows them as: the households' own, the regular guests still
+// waiting for an answer, and the regular guests who have one.
+func splitStanding(rows []store.Standing, loc *time.Location) (
+	households []store.Standing, waiting, regulars []standingRequest) {
+
+	// The guests' rows are gathered by their link, in the order they first
+	// appear, so a request is read as a whole and the queue keeps the order
+	// AllStanding put it in.
+	at := map[string]int{}
+	var guests []standingRequest
+	for _, st := range rows {
+		if !st.Guest() {
+			households = append(households, st)
+			continue
+		}
+		i, seen := at[st.Token]
+		if !seen {
+			at[st.Token] = len(guests)
+			guests = append(guests, standingRequest{
+				ID: st.ID, Name: st.Name, Host: st.Host,
+				Adults: st.Adults, Children: st.Children,
+				Diet: st.Diet, Note: st.Note,
+				AskedAt: st.CreatedAt.In(loc), Since: st.UpdatedAt.In(loc),
+				Pending: st.Pending(),
+			})
+			i = len(guests) - 1
+		}
+		guests[i].Weekdays = append(guests[i].Weekdays, st.Weekday)
+	}
+	for _, g := range guests {
+		if g.Pending {
+			waiting = append(waiting, g)
+		} else {
+			regulars = append(regulars, g)
+		}
+	}
+	return households, waiting, regulars
+}
+
+// handleAdminRegular is the administrator's answer to a regular guest: yes, no,
+// or not any more.
+//
+// Approving is what lets the request start counting, and revoking is the other
+// half of the same power. Neither reaches back into an evening the cooking team
+// has already been given: an approval counts from the moment it is given, and a
+// revocation leaves the evenings already sent exactly as they were sent.
+func (s *Server) handleAdminRegular(w http.ResponseWriter, r *http.Request, v *view) {
+	ctx := r.Context()
+	if err := r.ParseForm(); err != nil {
+		s.errorPage(w, r, http.StatusBadRequest,
+			"error.form", "error.form.detail")
+		return
+	}
+	// The form names one row of the request; the request itself is every row
+	// that shares that row's link.
+	row, err := s.store.StandingByID(ctx, strings.TrimSpace(r.FormValue("id")))
+	if err == nil && !row.Guest() {
+		// A household's own standing registration is its own business, and is
+		// not something to approve or revoke from here.
+		err = store.ErrNotFound
+	}
+	var g regular
+	if err == nil {
+		g, err = s.regularByToken(ctx, row.Token)
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		s.errorPage(w, r, http.StatusNotFound,
+			"error.reg.notfound", "error.reg.notfound.detail")
+		return
+	}
+	if err != nil {
+		s.fail(w, r, "read the regular guest's request", err)
+		return
+	}
+	st := g.first()
+
+	switch r.FormValue("action") {
+	case "approve":
+		if err := s.store.ApproveStanding(ctx, st.Token, s.now()); err != nil {
+			s.fail(w, r, "approve the regular guest", err)
+			return
+		}
+		s.log.Info("regular guest approved", "name", st.Name, "host", st.Host,
+			"evenings", len(g.Weekdays), "people", st.Adults+st.Children,
+			"by", v.Ident.MMUsername)
+		s.adminRedirect(w, r, "stamgast-godkand")
+	case "reject", "remove":
+		if err := s.revokeRegular(ctx, s.clientIP(r), g); err != nil {
+			s.fail(w, r, "turn the regular guest down", err)
+			return
+		}
+		s.log.Info("regular guest turned down", "name", st.Name,
+			"was_pending", st.Pending(), "by", v.Ident.MMUsername)
+		s.adminRedirect(w, r, "stamgast-borttagen")
+	default:
+		s.errorPage(w, r, http.StatusBadRequest,
+			"error.form", "error.form.detail")
+	}
 }
 
 // allWeekdays lists Monday to Sunday for the season form.

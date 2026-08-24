@@ -98,6 +98,15 @@
 	{{else}}
 	<p class="empty">{{t "guest.nodinners"}}</p>
 	{{end}}
+
+	{{/* Somebody who eats here every week should not have to fill this in every
+	     week. */}}
+	<hr class="rule">
+	<div class="callout">
+		<p><strong>{{t "guest.regular"}}</strong> {{t "guest.regular.body"}}</p>
+		<p class="muted small">{{t "guest.regular.who"}}</p>
+		<a class="button" href="/stamgast">{{t "guest.regular.link"}}</a>
+	</div>
 </div>
 {{end}}
 {{end}}
