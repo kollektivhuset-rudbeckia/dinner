@@ -270,6 +270,10 @@ code {
 }
 .auth-card h1 { font-size: 1.4rem; margin-bottom: .2em; }
 .auth-mark { width: 56px; height: 56px; display: block; margin: 0 0 1rem; }
+/* The way in for somebody with no password: its own block under the rule, with
+   the button as its centre of gravity rather than a link inside a sentence. */
+.auth-guest { display: grid; gap: .6rem; justify-items: stretch; text-align: center; }
+.auth-guest p { margin: 0; }
 .stack { display: flex; flex-direction: column; gap: .6rem; margin: 1.5rem 0 1rem; }
 .stack label { font-size: .875rem; color: var(--text-muted); }
 .stack label small { color: var(--text-faint); }
@@ -469,6 +473,31 @@ label { font-size: .85rem; }
 /* Not somebody to pick: a reason there is nobody to pick. */
 .combo-note { padding: .4rem .55rem; color: var(--text-faint); font-size: .85rem; }
 
+/* A date, as three selectors reading year-month-day. The parts are sized to
+   their contents so the field reads as one date rather than three boxes, and
+   the numbers are tabular so the dashes line up down a column of them. */
+.datefield { display: flex; flex-direction: column; gap: .25rem; }
+/* The three parts never wrap: half a date on each of two lines reads as two
+   dates, and leaves a dash hanging at the end of the first. */
+.date-parts { display: flex; align-items: center; gap: .3rem; flex-wrap: nowrap; }
+.datefield .date-part {
+	width: auto; flex: 0 0 auto;
+	/* Its own padding, but the right side keeps the room every select needs
+	   for the arrow drawn in its background. */
+	padding: .55rem 1.7rem .55rem .5rem;
+	font-variant-numeric: tabular-nums;
+}
+.datefield .date-year { width: 5.4rem; }
+.datefield .date-part[data-date="month"], .datefield .date-part[data-date="day"] { width: 4.1rem; }
+.date-sep { color: var(--text-faint); }
+/* The date in words, under the selectors. It is a confirmation, not a control,
+   so it takes none of the attention, and it holds its line whether or not
+   there is a date yet, so that picking one does not shift the form. */
+.date-prose { color: var(--text-faint); font-size: .78rem; min-height: 1.1em; }
+/* A date needs more room than a name does, so it is given two of the row's
+   columns rather than being squeezed into one. */
+.field-date { grid-column: span 2; }
+
 /* Handing an evening to the calendar the household already keeps. */
 .calbuttons { display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
 .confirm-mark { color: var(--ok-text); margin-bottom: .75rem; }
@@ -521,6 +550,7 @@ label { font-size: .85rem; }
 .button.primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
 .button.ghost { background: transparent; }
 .button.small { padding: .35rem .7rem; font-size: .85rem; }
+.button.block { width: 100%; }
 .button.danger { color: var(--danger-text); border-color: var(--danger-bg); background: var(--danger-bg); }
 .button.danger:hover { border-color: var(--danger-text); }
 
@@ -588,6 +618,39 @@ label { font-size: .85rem; }
 	border-color: var(--line); border-bottom-color: var(--bg-soft);
 	font-weight: 500;
 }
+/* How many regular guests are waiting to be let in. It sits on the tab so that
+   an administrator who came to fix a team name still sees the queue. */
+.tab-badge {
+	display: inline-block; min-width: 1.35em; padding: 0 .35em; margin-left: .35em;
+	border-radius: 999px; background: var(--warn-bg); color: var(--warn-text);
+	font-size: .78rem; font-weight: 600; text-align: center;
+}
+
+/* One regular guest's request, laid out to be judged: who they are, who in the
+   house they eat with, what they are asking for, and the two answers. */
+.requests { display: grid; gap: .75rem; }
+.request {
+	display: grid; gap: .75rem; padding: 1rem 1.15rem;
+	border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg);
+}
+.request-who { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.request-what {
+	display: grid; gap: .5rem 1.5rem; margin: 0;
+	grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+}
+.request-what dt { color: var(--text-faint); font-size: .78rem; }
+.request-what dd { margin: 0; font-size: .92rem; }
+.request-actions { display: flex; gap: .5rem; flex-wrap: wrap; margin: 0; }
+
+/* An aside that offers a way on somewhere: the standing arrangement on the
+   guest page, where somebody who comes every week would otherwise fill the
+   same form in every week. */
+.callout {
+	display: grid; gap: .75rem; justify-items: start;
+	padding: 1rem 1.15rem; border: 1px solid var(--line);
+	border-radius: var(--radius); background: var(--bg-soft);
+}
+.callout p { margin: 0; font-size: .92rem; }
 
 .schedule { display: grid; gap: .4rem; }
 .sched-row {

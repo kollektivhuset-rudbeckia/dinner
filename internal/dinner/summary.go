@@ -94,9 +94,16 @@ func (s Summary) Count(d store.Diet) int {
 // Resolve merges the answers given for one evening with the standing
 // registrations for its weekday, and adds everything up.
 //
-// A registration for the evening always wins over the household's standing
-// registration — including a registration for nobody, which is how a
-// household says it is skipping this one.
+// A registration for the evening always wins over the standing registration it
+// belongs to — including a registration for nobody, which is how a household
+// or a regular guest says it is skipping this one. Which registration belongs
+// to which standing one is the only thing that differs between the two: a
+// household is recognised by its account, and a regular guest, who has none,
+// by the standing registration their answer names.
+//
+// A regular guest's standing registration is counted only once an
+// administrator has approved it. Nobody in the house vouched for it by logging
+// in, so until then it is a request and not a rule.
 //
 // closes is the evening's deadline, and a standing registration only counts
 // for an evening it was already in force for. Registering for a single evening
@@ -109,9 +116,13 @@ func (s Summary) Count(d store.Diet) int {
 // that reached the database by some other road.
 func Resolve(regs []store.Registration, standing []store.Standing, closes time.Time) Summary {
 	answered := make(map[string]bool, len(regs))
+	overridden := make(map[string]bool, len(regs))
 	for _, r := range regs {
 		if r.Kind == store.KindMember && r.Member != "" {
 			answered[r.Member] = true
+		}
+		if r.StandingToken != "" {
+			overridden[r.StandingToken] = true
 		}
 	}
 
@@ -151,17 +162,29 @@ func Resolve(regs []store.Registration, standing []store.Standing, closes time.T
 		})
 	}
 	for _, st := range standing {
-		if answered[st.Member] {
+		// Nobody has agreed to this one yet, so it is not a rule about any
+		// evening.
+		if !st.Counts() {
+			continue
+		}
+		if st.Guest() {
+			if overridden[st.Token] {
+				continue
+			}
+		} else if answered[st.Member] {
 			continue
 		}
 		// Saved at or after the deadline: this evening was decided without it.
+		// For a regular guest that timestamp is the approval, so a request
+		// agreed to after the list went out does not turn up on it.
 		if !st.UpdatedAt.Before(closes) {
 			continue
 		}
 		add(Attendee{
 			Name: st.Name, Apartment: st.Apartment,
 			Adults: st.Adults, Children: st.Children, Diet: st.Diet,
-			Note: st.Note, Standing: true, Member: st.Member,
+			Note: st.Note, Host: st.Host, Guest: st.Guest(),
+			Standing: true, Member: st.Member,
 		})
 	}
 

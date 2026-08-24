@@ -120,3 +120,43 @@
 	    aria-label="{{t "ident.member.list"}}" hidden></ul>
 </div>
 {{end}}
+
+{{/* A date, as three selectors reading in ISO 8601 order. See datefield.go for
+     why it is not an <input type="date">. Built by the "datefield" function:
+     {{template "datefield" datefield "start" .Start true $.Data.Years}} */}}
+{{define "datefield"}}
+<div class="datefield" data-datefield data-date-months="{{.MonthNames}}">
+	<div class="date-parts">
+	<select name="{{.Name}}_year" class="date-part date-year" data-date="year"
+	        aria-label="{{t "date.year"}}" {{if .Required}}required{{end}}>
+		<option value="">{{t "date.year.none"}}</option>
+		{{$f := .}}
+		{{range .Years}}
+		{{$v := printf "%04d" .}}
+		<option value="{{$v}}"{{if eq $v $f.Year}} selected{{end}}>{{$v}}</option>
+		{{end}}
+	</select>
+	<span class="date-sep" aria-hidden="true">-</span>
+	<select name="{{.Name}}_month" class="date-part" data-date="month"
+	        aria-label="{{t "date.month"}}" {{if .Required}}required{{end}}>
+		<option value="">{{t "date.part.none"}}</option>
+		{{$f := .}}
+		{{range .Months}}
+		<option value="{{.}}"{{if eq . $f.Month}} selected{{end}}>{{.}}</option>
+		{{end}}
+	</select>
+	<span class="date-sep" aria-hidden="true">-</span>
+	<select name="{{.Name}}_day" class="date-part" data-date="day"
+	        aria-label="{{t "date.day"}}" {{if .Required}}required{{end}}>
+		<option value="">{{t "date.part.none"}}</option>
+		{{$f := .}}
+		{{range .Days}}
+		<option value="{{.}}"{{if eq . $f.Day}} selected{{end}}>{{.}}</option>
+		{{end}}
+	</select>
+	</div>
+	{{/* The numbers are exact but not friendly, so the field says the date
+	     back in words. app.js keeps this in step as the selectors change. */}}
+	<output class="date-prose" data-date-prose>{{.Prose}}</output>
+</div>
+{{end}}

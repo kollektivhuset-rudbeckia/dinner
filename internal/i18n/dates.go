@@ -60,6 +60,15 @@ func WeekdayShort(l Lang, t time.Time) string { return weekdaysShort[lang(l)][in
 // Month returns "augusti" or "August".
 func Month(l Lang, t time.Time) string { return months[lang(l)][int(t.Month())-1] }
 
+// MonthNames returns the twelve months in order, for a caller that needs the
+// names themselves rather than the name of one date's month — the date
+// selectors hand them to the browser so that app.js can say a date in words
+// without knowing which language the page was rendered in.
+func MonthNames(l Lang) []string {
+	table := months[lang(l)]
+	return table[:]
+}
+
 // MonthShort returns "aug" or "Aug".
 func MonthShort(l Lang, t time.Time) string { return monthsShort[lang(l)][int(t.Month())-1] }
 

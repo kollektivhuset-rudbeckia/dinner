@@ -57,7 +57,7 @@ type Server struct {
 // templates share one namespace per set.
 var pages = []string{
 	"index.html", "login.html", "identity.html", "error.html", "dinner.html",
-	"mine.html", "list.html", "guest.html", "admin.html",
+	"mine.html", "list.html", "guest.html", "regular.html", "admin.html",
 }
 
 // layouts are included in every page set.
@@ -133,6 +133,17 @@ func (s *Server) Handler() http.Handler {
 	// their calendar from their own page, behind their own token.
 	mux.HandleFunc("GET /gast/{token}/kalender.ics", s.handleGuestICS)
 
+	// A regular guest — a friend of the house who eats here every week without
+	// being in its Mattermost — asks here and is answered by an administrator.
+	// It is its own path rather than one under /gast because it is not about
+	// one evening: what a visitor asks for there is a seat, and what is asked
+	// for here is a standing arrangement.
+	mux.HandleFunc("GET /stamgast", s.handleRegularForm)
+	mux.HandleFunc("POST /stamgast", s.handleRegularSave)
+	mux.HandleFunc("GET /stamgast/{token}", s.handleRegularPage)
+	mux.HandleFunc("POST /stamgast/{token}", s.handleRegularUpdate)
+	mux.HandleFunc("POST /stamgast/{token}/kvall", s.handleRegularEvening)
+
 	// The printable list is reachable both by a logged-in member and by the
 	// signed link sent to the cooking-team leader, so it does its own check.
 	mux.HandleFunc("GET /middag/{date}/lista", s.handleList)
@@ -163,6 +174,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /admin/installningar", s.admin(s.handleAdminSettings))
 	mux.Handle("POST /admin/skicka", s.admin(s.handleAdminSend))
 	mux.Handle("POST /admin/anmalan", s.admin(s.handleAdminDeleteRegistration))
+	mux.Handle("POST /admin/stamgast", s.admin(s.handleAdminRegular))
 	mux.Handle("GET /admin/export.csv", s.admin(s.handleAdminCSV))
 
 	return s.recoverPanic(securityHeaders(mux))
@@ -424,6 +436,9 @@ func (s *Server) funcs(lang i18n.Lang) template.FuncMap {
 		"dict":      dict,
 		"hasPrefix": strings.HasPrefix,
 		"asset":     s.asset,
+		"datefield": func(name, iso string, required bool, years []int) dateField {
+			return newDateField(lang, name, iso, required, years)
+		},
 	}
 }
 

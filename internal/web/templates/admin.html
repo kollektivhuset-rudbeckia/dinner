@@ -8,6 +8,8 @@
 <p class="alert alert-ok" role="status">
 	{{if eq . "utskick"}}{{t "admin.sent"}}
 	{{else if eq . "utskick-misslyckades"}}{{t "admin.sent.failed"}}
+	{{else if eq . "stamgast-godkand"}}{{t "admin.regular.approved"}}
+	{{else if eq . "stamgast-borttagen"}}{{t "admin.regular.removed"}}
 	{{else}}{{t "admin.saved"}}{{end}}
 </p>
 {{end}}
@@ -22,7 +24,8 @@
 	{{$tab := .Data.Tab}}
 	{{range .Data.Tabs}}
 	<a class="tab{{if eq .ID $tab}} is-current{{end}}" href="/admin?flik={{.ID}}"
-	   {{if eq .ID $tab}}aria-current="page"{{end}}>{{.Name}}</a>
+	   {{if eq .ID $tab}}aria-current="page"{{end}}>{{.Name}}{{if .Badge}}
+		<span class="tab-badge" title="{{t "admin.regular.waiting" .Badge}}">{{.Badge}}</span>{{end}}</a>
 	{{end}}
 </nav>
 
@@ -233,8 +236,14 @@
 		<input type="hidden" name="id" value="{{.ID}}">
 		<input type="hidden" name="flik" value="sasonger">
 		<div class="field"><label>{{t "admin.seasons.name"}}<input name="name" type="text" value="{{.Name}}" required></label></div>
-		<div class="field"><label>{{t "admin.seasons.from"}}<input name="start" type="date" value="{{.Start}}" required></label></div>
-		<div class="field"><label>{{t "admin.seasons.to"}}<input name="end" type="date" value="{{.End}}" required></label></div>
+		<div class="field field-date">
+			<label>{{t "admin.seasons.from"}}</label>
+			{{template "datefield" datefield "start" .Start true $.Data.Years}}
+		</div>
+		<div class="field field-date">
+			<label>{{t "admin.seasons.to"}}</label>
+			{{template "datefield" datefield "end" .End true $.Data.Years}}
+		</div>
 		<fieldset class="weekdays">
 			<legend>{{t "admin.seasons.evenings"}}</legend>
 			{{$se := .}}
@@ -264,8 +273,14 @@
 	<form method="post" action="/admin/sasong" class="season-row">
 		<input type="hidden" name="flik" value="sasonger">
 		<div class="field"><label>{{t "admin.seasons.name"}}<input name="name" type="text" placeholder="{{t "admin.seasons.placeholder" .Now.Year}}" required></label></div>
-		<div class="field"><label>{{t "admin.seasons.from"}}<input name="start" type="date" required></label></div>
-		<div class="field"><label>{{t "admin.seasons.to"}}<input name="end" type="date" required></label></div>
+		<div class="field field-date">
+			<label>{{t "admin.seasons.from"}}</label>
+			{{template "datefield" datefield "start" "" true .Data.Years}}
+		</div>
+		<div class="field field-date">
+			<label>{{t "admin.seasons.to"}}</label>
+			{{template "datefield" datefield "end" "" true .Data.Years}}
+		</div>
 		<fieldset class="weekdays">
 			<legend>{{t "admin.seasons.evenings"}}</legend>
 			{{range .Data.Weekdays}}
@@ -296,8 +311,14 @@
 		<input type="hidden" name="id" value="{{.ID}}">
 		<input type="hidden" name="flik" value="uppehall">
 		<div class="field"><label>{{t "admin.breaks.what"}}<input name="name" type="text" value="{{.Name}}" required></label></div>
-		<div class="field"><label>{{t "admin.seasons.from"}}<input name="start" type="date" value="{{.Start}}" required></label></div>
-		<div class="field"><label>{{t "admin.seasons.to"}}<input name="end" type="date" value="{{.End}}"></label></div>
+		<div class="field field-date">
+			<label>{{t "admin.seasons.from"}}</label>
+			{{template "datefield" datefield "start" .Start true $.Data.Years}}
+		</div>
+		<div class="field field-date">
+			<label>{{t "admin.seasons.to"}}</label>
+			{{template "datefield" datefield "end" .End false $.Data.Years}}
+		</div>
 		<div class="team-actions">
 			<button type="submit" class="button small">Spara</button>
 			<button type="submit" class="button small ghost danger" name="action" value="delete"
@@ -312,9 +333,13 @@
 	<form method="post" action="/admin/uppehall" class="season-row">
 		<input type="hidden" name="flik" value="uppehall">
 		<div class="field"><label>{{t "admin.breaks.what"}}<input name="name" type="text" placeholder="{{t "admin.breaks.placeholder"}}" required></label></div>
-		<div class="field"><label>{{t "admin.seasons.from"}}<input name="start" type="date" required></label></div>
-		<div class="field">
-			<label>{{t "admin.seasons.to"}}<input name="end" type="date"></label>
+		<div class="field field-date">
+			<label>{{t "admin.seasons.from"}}</label>
+			{{template "datefield" datefield "start" "" true .Data.Years}}
+		</div>
+		<div class="field field-date">
+			<label>{{t "admin.seasons.to"}}</label>
+			{{template "datefield" datefield "end" "" false .Data.Years}}
 			<small class="hint">{{t "admin.breaks.single"}}</small>
 		</div>
 		<div class="team-actions"><button type="submit" class="button small primary">{{t "add"}}</button></div>
@@ -375,6 +400,99 @@
 
 {{if eq .Data.Tab "staende"}}
 {{/* --------------------------------------------------------- standing --- */}}
+
+{{/* The queue first, because it is the only thing on this tab that is waiting
+     for somebody. A regular guest is not in the house's Mattermost and got
+     past no password, so their standing registration counts for nothing until
+     one of the cooking teams' administrators agrees to it — and it stops
+     counting again the moment one of them says so. */}}
+<section class="panel" id="stamgaster">
+	<div class="panel-head">
+		<h2>{{t "admin.regular.queue"}}</h2>
+		<span class="muted small">{{t "admin.standing.count" (len .Data.Requests)}}</span>
+	</div>
+	<p class="muted">{{t "admin.regular.queue.body"}}</p>
+	{{if .Data.Requests}}
+	<div class="requests">
+		{{range .Data.Requests}}
+		<article class="request">
+			<div class="request-who">
+				<strong>{{.Name}}</strong>
+				<span class="chip chip-guest">{{if .Host}}{{t "attendee.guest.of" .Host}}{{else}}{{t "admin.regular.nohost"}}{{end}}</span>
+			</div>
+			<dl class="request-what">
+				<div><dt>{{t "admin.standing.evening"}}</dt><dd>{{joinWeekdays .Weekdays}}</dd></div>
+				<div><dt>{{t "guest.receipt.count"}}</dt><dd>
+					{{count "adult" .Adults}}{{if .Children}}, {{count "child" .Children}}{{end}}
+				</dd></div>
+				<div><dt>{{t "list.col.diet"}}</dt><dd>{{dietLabel .Diet}}</dd></div>
+				{{with .Note}}<div><dt>{{t "list.col.note"}}</dt><dd>{{.}}</dd></div>{{end}}
+				<div><dt>{{t "admin.regular.asked"}}</dt><dd>{{dateTime .AskedAt}}</dd></div>
+			</dl>
+			<form method="post" action="/admin/stamgast" class="request-actions">
+				<input type="hidden" name="flik" value="staende">
+				<input type="hidden" name="id" value="{{.ID}}">
+				<button type="submit" class="button primary" name="action" value="approve">
+					{{t "admin.regular.approve"}}</button>
+				<button type="submit" class="button ghost danger" name="action" value="reject"
+				        data-confirm="{{t "admin.regular.reject.confirm" .Name}}">
+					{{t "admin.regular.reject"}}</button>
+			</form>
+		</article>
+		{{end}}
+	</div>
+	{{else}}
+	<p class="empty">{{t "admin.regular.queue.none"}}</p>
+	{{end}}
+	<p class="muted small">{{t "admin.regular.link"}} <code>{{.Data.RegularURL}}</code></p>
+</section>
+
+<section class="panel" id="godkanda">
+	<div class="panel-head">
+		<h2>{{t "admin.regular.approved.title"}}</h2>
+		<span class="muted small">{{t "admin.standing.count" (len .Data.Regulars)}}</span>
+	</div>
+	<p class="muted">{{t "admin.regular.approved.body"}}</p>
+	{{if .Data.Regulars}}
+	<div class="table-wrap">
+		<table class="table">
+			<thead>
+				<tr><th>{{t "list.col.name"}}</th><th>{{t "guest.receipt.host"}}</th>
+				<th>{{t "admin.standing.evening"}}</th>
+				<th class="num">{{t "form.adults"}}</th><th class="num">{{t "form.children"}}</th>
+				<th>{{t "list.col.diet"}}</th><th>{{t "list.col.note"}}</th>
+				<th>{{t "admin.regular.since"}}</th>
+				<th class="no-print"><span class="visually-hidden">{{t "list.col.action"}}</span></th></tr>
+			</thead>
+			<tbody>
+				{{range .Data.Regulars}}
+				<tr>
+					<td>{{.Name}}</td><td>{{.Host}}</td>
+					<td>{{joinWeekdays .Weekdays}}</td>
+					<td class="num">{{.Adults}}</td><td class="num">{{.Children}}</td>
+					<td>{{dietLabel .Diet}}</td>
+					<td>{{.Note}}</td>
+					<td class="muted small">{{dateShort .Since}}</td>
+					<td class="no-print">
+						<form method="post" action="/admin/stamgast" class="inline">
+							<input type="hidden" name="flik" value="staende">
+							<input type="hidden" name="id" value="{{.ID}}">
+							<input type="hidden" name="action" value="remove">
+							<button type="submit" class="button small ghost danger"
+							        data-confirm="{{t "admin.regular.remove.confirm" .Name}}">
+								{{t "remove"}}</button>
+						</form>
+					</td>
+				</tr>
+				{{end}}
+			</tbody>
+		</table>
+	</div>
+	{{else}}
+	<p class="empty">{{t "admin.regular.approved.none"}}</p>
+	{{end}}
+</section>
+
 <section class="panel" id="staende">
 	<div class="panel-head">
 		<h2>{{t "admin.tab.standing"}}</h2>
