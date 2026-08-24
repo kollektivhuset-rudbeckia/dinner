@@ -179,6 +179,7 @@ var catalog = map[string]entry{
 	"index.lede":          {"Vi äter tillsammans %s. Anmäl dig innan matlaget handlar, så blir det lagom mycket mat.", "We eat together on %s. Register before the cooking team goes shopping, and there will be just the right amount of food."},
 	"index.lede.at":       {"klockan %s", "at %s"},
 	"index.lede.in":       {"i %s", "in %s"},
+	"index.rules":         {"Kom ihåg: anmäl bara de portioner som verkligen ska ätas — inga extra för att få mat över. Blir det mat kvar tar vi matlåda först efter klockan 19.", "A reminder: register only the portions that will really be eaten — no extras to have food left over. If there is food left over, boxes to take home wait until 19:00."},
 	"index.noseason":      {"Ingen säsong är inlagd ännu", "No season has been set up yet"},
 	"index.noseason.body": {"Så fort matgruppen lägger in en säsong med start- och slutdatum dyker kvällarna upp här.", "As soon as the dinner group adds a season with a start and an end date, the evenings turn up here."},
 	"index.noseason.cta":  {"Lägg in en säsong", "Add a season"},
