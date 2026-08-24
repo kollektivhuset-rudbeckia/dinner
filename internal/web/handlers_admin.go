@@ -347,13 +347,15 @@ func nextRotationOffset(world *world) int {
 		return 0
 	}
 	last := world.Seasons[len(world.Seasons)-1]
-	n := 0
+	// The rotation moves a week at a time, so count the weeks the last season
+	// actually cooked rather than its evenings.
+	weeks := map[string]bool{}
 	for _, d := range world.Schedule.Dinners {
-		if d.Season.ID == last.ID {
-			n++
+		if d.Season.ID == last.ID && !d.Cancelled {
+			weeks[dinner.WeekStart(d.Date, d.Date.Location()).Format("2006-01-02")] = true
 		}
 	}
-	return (last.RotationOffset + n) % active
+	return (last.RotationOffset + len(weeks)) % active
 }
 
 // adminRedirect sends the browser back to the part of the admin view the form

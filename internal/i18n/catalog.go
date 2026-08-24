@@ -450,7 +450,7 @@ var catalog = map[string]entry{
 	"admin.nobaseurl":   {"Husets adress är inte satt, utan står kvar på %s. Alla länkar som lämnar sidan pekar därför hit: meddelandet till matlaget, adressen ett kalkylark hämtar, och länken du ger en gäst. Sätt %s till den riktiga adressen.", "The site's own address is unset and still says %s. Every link that leaves the site therefore points here: the message to the cooking team, the address a spreadsheet fetches, and the link you give a guest. Set %s to the real address."},
 
 	"admin.schedule.pickseason":       {"Välj säsong", "Choose a season"},
-	"admin.schedule.body":             {"Lagen turas om i den ordning de står under Matlag. Vill du byta för en enskild kväll väljer du ett annat lag här — då står den kvällen kvar oavsett hur rotationen ändras.", "The teams take turns in the order they have under Cooking teams. To swap a single evening, pick another team here — that evening then stays put however the rotation changes."},
+	"admin.schedule.body":             {"Lagen turas om en vecka i taget, i den ordning de står under Matlag: samma lag lagar alla veckans middagar. Vill du byta för en enskild kväll väljer du ett annat lag här — då står den kvällen kvar oavsett hur rotationen ändras.", "The teams take turns a week at a time, in the order they have under Cooking teams: the same team cooks every dinner of its week. To swap a single evening, pick another team here — that evening then stays put however the rotation changes."},
 	"admin.schedule.week":             {"v.%d", "wk %d"},
 	"admin.schedule.teamfor":          {"Matlag %s", "Cooking team %s"},
 	"admin.schedule.byrotation":       {"Enligt turordning", "By rotation"},
@@ -502,7 +502,7 @@ var catalog = map[string]entry{
 	"admin.seasons.to":                  {"Till", "To"},
 	"admin.seasons.evenings":            {"Middagskvällar", "Dinner evenings"},
 	"admin.seasons.firstteam":           {"Startlag", "Starting team"},
-	"admin.seasons.firstteam.hint":      {"0 = första laget i listan tar säsongens första middag.", "0 = the first team in the list takes the season's first dinner."},
+	"admin.seasons.firstteam.hint":      {"0 = första laget i listan tar säsongens första vecka.", "0 = the first team in the list takes the season's first week."},
 	"admin.seasons.firstteam.suggested": {"Föreslaget så att lagen fortsätter där förra säsongen slutade.", "Suggested so the teams carry on where the last season stopped."},
 	"admin.seasons.delete.confirm":      {"Ta bort säsongen %s? Anmälningarna ligger kvar men blir oåtkomliga.", "Remove the season %s? The registrations stay but become unreachable."},
 	"admin.seasons.none":                {"Ingen säsong inlagd.", "No season has been added."},

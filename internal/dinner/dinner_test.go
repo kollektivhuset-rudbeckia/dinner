@@ -133,10 +133,12 @@ func TestBuildGeneratesOnlyTheSeasonsWeekdays(t *testing.T) {
 	}
 }
 
-func TestRotationTakesTurnsAndWrapsAround(t *testing.T) {
+// A team owns the whole week it is given, so it cooks both the Tuesday and the
+// Thursday before the next team takes over.
+func TestRotationTakesTurnsAWeekAtATime(t *testing.T) {
 	sched := Build([]store.Season{season()}, teams(4), nil, nil, params())
-	want := []string{"Lag 1", "Lag 2", "Lag 3", "Lag 4", "Lag 1",
-		"Lag 2", "Lag 3", "Lag 4", "Lag 1", "Lag 2"}
+	want := []string{"Lag 1", "Lag 1", "Lag 2", "Lag 2", "Lag 3",
+		"Lag 3", "Lag 4", "Lag 4", "Lag 1", "Lag 1"}
 	for i, d := range sched.Dinners {
 		if d.Team == nil {
 			t.Fatalf("%s has no team", d.Key)
@@ -169,7 +171,7 @@ func TestInactiveTeamsAreSkipped(t *testing.T) {
 			t.Fatalf("%s was given the inactive Lag 2", d.Key)
 		}
 	}
-	want := []string{"Lag 1", "Lag 3", "Lag 4", "Lag 1"}
+	want := []string{"Lag 1", "Lag 1", "Lag 3", "Lag 3"}
 	for i, w := range want {
 		if got := sched.Dinners[i].Team.Name; got != w {
 			t.Errorf("dinner %d: team %s, want %s", i, got, w)
@@ -215,12 +217,39 @@ func TestOverridesWinOverTheRotation(t *testing.T) {
 	if off.Team != nil {
 		t.Errorf("a cancelled dinner should have no team, got %s", off.Team.Name)
 	}
-	// And it does not use up a turn: the team that would have cooked it takes
-	// the next one instead. 25 Aug went to Lag 1, 27 Aug was handed to Lag 4
-	// by hand (still consuming turn two), 1 Sep is off — so Lag 3 cooks 3 Sep.
+	// Cancelling one evening does not hand the week to somebody else: the week
+	// of 31 Aug belongs to Lag 2 either way, so it still cooks 3 Sep. The
+	// hand-picked Lag 4 on 27 Aug likewise only borrows that one evening —
+	// the week of 24 Aug is Lag 1's.
 	after, _ := sched.Find("2026-09-03")
-	if after.Team.Name != "Lag 3" {
-		t.Errorf("team after a cancellation = %s, want Lag 3", after.Team.Name)
+	if after.Team.Name != "Lag 2" {
+		t.Errorf("team after a cancellation = %s, want Lag 2", after.Team.Name)
+	}
+}
+
+// A week with nothing left to cook costs nobody a turn, the same way a break
+// does — the team on turn simply starts the week after.
+func TestAWhollyCancelledWeekPassesTheTurnOn(t *testing.T) {
+	overrides := map[string]store.Override{
+		"2026-09-01": {Date: "2026-09-01", Cancelled: true},
+		"2026-09-03": {Date: "2026-09-03", Cancelled: true},
+	}
+	sched := Build([]store.Season{season()}, teams(4), overrides, nil, params())
+	want := map[string]string{
+		"2026-08-25": "Lag 1",
+		"2026-08-27": "Lag 1",
+		// The week of 31 Aug is entirely off, so Lag 2 keeps its turn.
+		"2026-09-08": "Lag 2",
+		"2026-09-10": "Lag 2",
+	}
+	for key, team := range want {
+		d, ok := sched.Find(key)
+		if !ok {
+			t.Fatalf("%s missing", key)
+		}
+		if d.Team.Name != team {
+			t.Errorf("%s: team %s, want %s", key, d.Team.Name, team)
+		}
 	}
 }
 
@@ -231,8 +260,8 @@ func TestOverrideWithUnknownTeamFallsBackToRotation(t *testing.T) {
 	}
 	sched := Build([]store.Season{season()}, teams(4), overrides, nil, params())
 	d, _ := sched.Find("2026-08-27")
-	if d.Team == nil || d.Team.Name != "Lag 2" {
-		t.Errorf("team = %v, want the rotation's Lag 2", d.Team)
+	if d.Team == nil || d.Team.Name != "Lag 1" {
+		t.Errorf("team = %v, want the rotation's Lag 1", d.Team)
 	}
 	if d.Assigned {
 		t.Error("a dangling override should not count as hand-assigned")
@@ -339,11 +368,11 @@ func TestBreaksPauseTheRotationRatherThanSkippingTeams(t *testing.T) {
 
 	want := map[string]string{
 		"2026-08-25": "Lag 1",
-		"2026-08-27": "Lag 2",
-		// 1 and 3 Sep are the break.
-		"2026-09-08": "Lag 3",
-		"2026-09-10": "Lag 4",
-		"2026-09-15": "Lag 1",
+		"2026-08-27": "Lag 1",
+		// The whole week of 31 Aug is the break, so it takes no turn at all.
+		"2026-09-08": "Lag 2",
+		"2026-09-10": "Lag 2",
+		"2026-09-15": "Lag 3",
 	}
 	for key, team := range want {
 		d, ok := sched.Find(key)
