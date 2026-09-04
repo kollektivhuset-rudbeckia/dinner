@@ -244,6 +244,8 @@ code {
 .hero { margin-bottom: 2rem; }
 .hero h1 { font-size: clamp(1.8rem, 1.4rem + 1.4vw, 2.4rem); }
 .lede { color: var(--text-muted); font-size: 1.05rem; max-width: 46rem; }
+/* The house rules under the lede: same measure, so the two line up. */
+.hero .note { max-width: 46rem; }
 .crumbs { font-size: .875rem; color: var(--text-muted); margin-bottom: 1rem; }
 .crumbs a { color: var(--text-muted); }
 .crumbs span[aria-hidden] { padding: 0 .35rem; color: var(--text-faint); }

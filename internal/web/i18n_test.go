@@ -276,6 +276,29 @@ func TestDatesFollowTheLanguage(t *testing.T) {
 	}
 }
 
+// The house rules on the dinner list are the reminder everybody sees before
+// registering, so they have to be there in both languages.
+func TestTheDinnerListRemindsAboutPortionsAndLeftovers(t *testing.T) {
+	h := newHarness(t)
+	c := h.client(t)
+	c.member("Anna", "anna@example.se")
+
+	sv := c.get("/").Body.String()
+	for _, want := range []string{"bara de portioner", "matlåda", "19"} {
+		if !strings.Contains(sv, want) {
+			t.Errorf("the Swedish dinner list is missing %q", want)
+		}
+	}
+
+	c.post("/sprak", url.Values{"lang": {"en"}, "next": {"/"}})
+	en := c.get("/").Body.String()
+	for _, want := range []string{"only the portions", "boxes to take home", "19:00"} {
+		if !strings.Contains(en, want) {
+			t.Errorf("the English dinner list is missing %q", want)
+		}
+	}
+}
+
 // The list is what the cooking team reads, so it has to switch too.
 func TestTheListAndItsDietsFollowTheLanguage(t *testing.T) {
 	h := newHarness(t)

@@ -140,10 +140,12 @@ func (s Schedule) Upcoming(now time.Time, limit int) []Dinner {
 // Build generates every dinner in every season and hands each one to a cooking
 // team.
 //
-// Only evenings that actually happen take a turn. An evening inside a break is
-// never generated at all, and a cancelled one is generated but skipped in the
-// rotation — so a school holiday or a late cancellation pauses the teams
-// rather than costing one of them its turn.
+// A team owns a whole week, not a single evening: it cooks every dinner in the
+// week its turn lands on, because it shops once for all of them. Only weeks
+// that actually happen take a turn. Evenings inside a break are never
+// generated at all, and a cancelled one is generated but cooked by nobody — a
+// week where everything is off passes the turn on rather than costing a team
+// its go.
 func Build(seasons []store.Season, teams []store.Team, overrides map[string]store.Override,
 	breaks []store.Break, p Params) Schedule {
 	byID := map[int64]store.Team{}
@@ -209,9 +211,14 @@ func seasonDinners(se store.Season, rotation []store.Team, byID map[int64]store.
 	}
 
 	var out []Dinner
-	// turn counts only the evenings that are really cooked, so the rotation
-	// picks up where it left off after a break.
+	// turn counts the weeks that are really cooked, so a team keeps the whole
+	// week and the rotation picks up where it left off after a break.
 	turn := 0
+	// week is the Monday of the week turn currently refers to, and cooked says
+	// whether that week has already claimed its turn. A week where every
+	// evening is cancelled never claims one, so the team on turn keeps it.
+	week := ""
+	cooked := false
 	for day := start; !day.After(end); day = day.AddDate(0, 0, 1) {
 		if !want[day.Weekday()] {
 			continue
@@ -219,6 +226,12 @@ func seasonDinners(se store.Season, rotation []store.Team, byID map[int64]store.
 		key := day.Format("2006-01-02")
 		if inBreak(breaks, key) {
 			continue
+		}
+		if monday := WeekStart(day, p.Loc).Format("2006-01-02"); monday != week {
+			if cooked {
+				turn++
+			}
+			week, cooked = monday, false
 		}
 		d := Dinner{
 			Date:   day,
@@ -248,9 +261,9 @@ func seasonDinners(se store.Season, rotation []store.Team, byID map[int64]store.
 			team := rotation[((turn+se.RotationOffset)%n+n)%n]
 			d.Team = &team
 		}
-		// A hand-picked team still consumes the turn, so swapping one evening
-		// leaves the rest of the season exactly where it was.
-		turn++
+		// A hand-picked team still uses up the week's turn, so swapping one
+		// evening leaves the rest of the season exactly where it was.
+		cooked = true
 		out = append(out, d)
 	}
 	return out

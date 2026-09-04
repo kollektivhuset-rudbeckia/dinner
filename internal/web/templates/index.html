@@ -7,6 +7,7 @@
 		{{- with .Dinner.Location}}{{$when = printf "%s %s" $when (t "index.lede.in" .)}}{{end}}
 		{{- t "index.lede" $when}}
 	</p>
+	<p class="note">{{t "index.rules"}}</p>
 </div>
 
 {{if .Data.NoSchedule}}
