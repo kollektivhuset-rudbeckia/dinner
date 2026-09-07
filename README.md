@@ -19,7 +19,7 @@ en säsong som redan är i gång, så att du har något att klicka på.
 **Med Docker** — det enda du behöver är Docker:
 
 ```bash
-docker run --rm -p 8080:8080 -e DEMO=true ghcr.io/o5ten/dinner:latest
+docker run --rm -p 8080:8080 -e DEMO=true ghcr.io/kollektivhuset-rudbeckia/dinner:latest
 ```
 
 **Med Go** — om du klonat repot:
@@ -552,10 +552,17 @@ startar demon och hämtar en sida. Den bygger också containern, så en trasig
 `Dockerfile` fastnar i pull requesten och inte i releasen.
 
 `.github/workflows/release.yml` bygger och publicerar
-`ghcr.io/o5ten/dinner` för `linux/amd64` och `linux/arm64` vid varje push
-till `main` och vid varje `v*`-tagg.
+`ghcr.io/kollektivhuset-rudbeckia/dinner` för `linux/amd64` och `linux/arm64`
+vid varje push till `main` och vid varje `v*`-tagg.
 
-Uppdatera med:
+`.github/workflows/deploy.yml` rullar ut den till quebec. Den hänger på att
+bygget lyckats och inte på pushen, så en utrullning kan aldrig starta om
+containern på gårdagens image. En push till `main` som går igenom testerna
+står alltså på <https://dinner.rudbeckia.nu> ett par minuter senare, utan att
+någon rör servern. Hur den kommer in, vad som skickas och vad man gör när
+något går fel: [docs/deploy.md](docs/deploy.md).
+
+För hand, om du kör den någon annanstans:
 
 ```bash
 docker compose pull && docker compose up -d

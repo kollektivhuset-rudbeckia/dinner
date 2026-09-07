@@ -33,7 +33,7 @@ FROM gcr.io/distroless/static-debian12:nonroot
 
 LABEL org.opencontainers.image.title="Rudbeckia middagar" \
       org.opencontainers.image.description="Anmälan till kollektivhusets gemensamma middagar" \
-      org.opencontainers.image.source="https://github.com/O5ten/dinner" \
+      org.opencontainers.image.source="https://github.com/kollektivhuset-rudbeckia/dinner" \
       org.opencontainers.image.licenses="MIT"
 
 COPY --from=build /out/dinners /dinners
