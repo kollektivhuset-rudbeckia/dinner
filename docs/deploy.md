@@ -39,20 +39,40 @@ och efter flytten — databasen behövde varken kopieras eller importeras om.
 
 ## Hur den kommer in
 
-Nyckeln i `QUEBEC_SSH_KEY` når kontot `deploy` på quebec, och med *den*
-nyckeln kan kontot göra exakt en sak. `authorized_keys` binder nyckeln till
-ett *forced command*:
+Nyckeln ligger i organisationens `QUEBEC_SSH_KEY` och delas av husets tre
+tjänster. Den når kontot `deploy` på quebec, och med den nyckeln kan kontot
+göra exakt en sak. `authorized_keys` binder nyckeln till ett *forced command*:
 
 ```
-command="/usr/local/bin/deploy-dinner",no-agent-forwarding,no-port-forwarding,no-pty,no-user-rc,no-X11-forwarding
+command="/usr/local/bin/deploy",no-agent-forwarding,no-port-forwarding,no-pty,no-user-rc,no-X11-forwarding
 ```
 
 Vad den andra änden än ber om kör ssh det skriptet. Inget skal, ingen scp,
 ingen vidarebefordran. Skriptet ägs av root och går inte att skriva till från
 `deploy`, så nyckeln kan inte heller peka om sig själv.
 
-Registret har sin egen nyckel bunden till sitt eget skript i samma
-`authorized_keys`. Nycklarna kan alltså inte rulla ut varandras tjänst.
+### Varför tjänsten står i ssh-kommandot
+
+Ett forced command hänger på *nyckeln*, inte på repot. Eftersom nyckeln är
+gemensam kan den alltså inte i sig säga vilken tjänst som ska startas om, och
+därför skickar workflowet namnet som ssh-kommando:
+
+```bash
+tar -czf - config.yaml docker-compose.yml DEPLOYED_SHA \
+  | ssh "$USER@$HOST" dinner
+```
+
+Det körs inte som ett kommando. `sshd` lägger strängen i
+`SSH_ORIGINAL_COMMAND` och kör skriptet ändå, och skriptet matchar den mot en
+fast lista — `members`, `dinner`, `booking` — där varje gren sätter katalog,
+container och port från literaler. Strängen kommer utifrån och används därför
+aldrig för att bygga en sökväg. Allt annat avvisas i stället för att gissas
+på, och ett okänt namn ekas inte tillbaka i loggen.
+
+Baksidan av en gemensam nyckel är värd att säga rakt ut: varje repo i
+organisationen som kommer åt hemligheten kan rulla ut vilken som helst av de
+tre tjänsterna. Vill man inte det, är det nyckeln som ska delas upp — en per
+tjänst, var och en bunden till sitt eget skript.
 
 ## Vad som skickas
 
@@ -84,14 +104,21 @@ om på gårdagens image. Ett bygge som misslyckas rullas inte ut alls.
 Utrullningen checkar ut den commit som *byggdes*, inte vad `main` har hunnit
 bli under minuterna sedan dess.
 
-## Hemligheter i repot
+## Hemligheter
+
+De ligger på organisationen och gäller alla tre tjänsterna:
 
 | Secret | Vad |
 |---|---|
-| `QUEBEC_SSH_KEY` | privata halvan av nyckeln som kör `deploy-dinner` |
+| `QUEBEC_SSH_KEY` | privata halvan av nyckeln som kör `/usr/local/bin/deploy` |
 | `QUEBEC_HOST` | `ssh.rudbeckia.nu` |
 | `QUEBEC_USER` | `deploy` |
 | `QUEBEC_KNOWN_HOSTS` | värdnyckeln, så att utrullningen inte litar på vad som helst |
+
+Ett repo som sätter en egen hemlighet med samma namn tar över den från
+organisationen. Gör det bara om tjänsten också har en egen nyckel bunden till
+ett eget skript — annars går utrullningen in med en nyckel vars forced command
+startar om någon annans container.
 
 ## När något går fel
 
@@ -135,68 +162,17 @@ docker compose start dinners
 
 ## Skriptet på servern
 
-`/usr/local/bin/deploy-dinner`, ägt av root:
+Skriptet är gemensamt för alla tre tjänsterna och står i sin helhet i
+[bokningens motsvarande sida](https://github.com/kollektivhuset-rudbeckia/booking/blob/main/docs/deploy.md#skriptet-på-servern).
+Grenen för den här tjänsten:
 
 ```sh
-#!/bin/sh
-set -eu
-
-DIR=/srv/dinner
-cd "$DIR"
-
-ALLOWED="config.yaml docker-compose.yml DEPLOYED_SHA"
-
-if [ ! -t 0 ]; then
-    tmp=$(mktemp -d)
-    trap 'rm -rf "$tmp"' EXIT
-    if cat > "$tmp/in.tgz" && [ -s "$tmp/in.tgz" ]; then
-        echo "==> unpacking configuration"
-        tar -xzf "$tmp/in.tgz" -C "$tmp" $ALLOWED 2>/dev/null || {
-            echo "    the archive did not hold what was expected" >&2; exit 1; }
-        for f in $ALLOWED; do
-            [ -f "$tmp/$f" ] || continue
-            if cmp -s "$tmp/$f" "$DIR/$f"; then
-                echo "    $f unchanged"
-            else
-                cp "$tmp/$f" "$DIR/$f"
-                echo "    $f updated"
-            fi
-        done
-    fi
-fi
-
-[ -f DEPLOYED_SHA ] && echo "==> version $(cat DEPLOYED_SHA)"
-
-echo "==> pulling the image"
-docker compose pull --quiet dinners
-
-echo "==> restarting"
-was=$(docker inspect dinners-rudbeckia --format '{{.State.StartedAt}}' 2>/dev/null || echo none)
-docker compose up -d dinners
-now=$(docker inspect dinners-rudbeckia --format '{{.State.StartedAt}}' 2>/dev/null || echo none)
-
-echo "==> waiting for it to answer"
-i=0
-while [ "$i" -lt 40 ]; do
-    if curl -fsS --max-time 3 http://localhost:8099/healthz >/dev/null 2>&1; then
-        echo "    healthy after ${i}s"
-        if [ "$was" = "$now" ]; then
-            echo "    already running this image; nothing was restarted"
-            exit 0
-        fi
-        if docker compose logs --no-color --since 120s dinners 2>&1 |
-           grep -q "mattermost bot ready"; then
-            echo "    the Mattermost bot is connected"
-        else
-            echo "    NOTE: running without Mattermost — lists are only written to the log"
-        fi
-        exit 0
-    fi
-    i=$((i + 1))
-    sleep 1
-done
-
-echo "    it never became healthy. Last log lines:" >&2
-docker compose logs --no-color --tail 40 dinners >&2
-exit 1
+    dinner)
+        NAME=dinner; SVC=dinners; CONTAINER=dinners-rudbeckia; PORT=8099
+        READY='mattermost bot ready'
+        UNREADY='running without Mattermost — lists are only written to the log'
+        ;;
 ```
+
+Att lägga till en fjärde tjänst är en rot-ändring i `/usr/local/bin/deploy`,
+vilket är rätt sorts tröskel.
