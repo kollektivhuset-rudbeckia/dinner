@@ -52,11 +52,11 @@
 	{{if .Data.Rows}}
 	<p class="muted">{{t "admin.schedule.body"}}</p>
 	{{if .Data.Past}}
-	<p class="muted small">
+	<p>
 		{{if .Data.ShowPast}}
-		<a class="quiet-link" href="/admin?flik=schema{{with .Data.Season}}&amp;sasong={{.ID}}{{end}}">{{t "admin.schedule.past.hide"}}</a>
+		<a class="button small ghost" href="/admin?flik=schema{{with .Data.Season}}&amp;sasong={{.ID}}{{end}}">{{t "admin.schedule.past.hide"}}</a>
 		{{else}}
-		<a class="quiet-link" href="/admin?flik=schema{{with .Data.Season}}&amp;sasong={{.ID}}{{end}}&amp;tidigare=1">{{t "admin.schedule.past.show" .Data.Past}}</a>
+		<a class="button small ghost" href="/admin?flik=schema{{with .Data.Season}}&amp;sasong={{.ID}}{{end}}&amp;tidigare=1">{{t "admin.schedule.past.show" .Data.Past}}</a>
 		{{end}}
 	</p>
 	{{end}}
