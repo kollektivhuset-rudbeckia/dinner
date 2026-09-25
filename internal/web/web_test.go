@@ -1299,6 +1299,41 @@ func TestADeadlineWithNoCookingTeamIsRecordedAsUnmanned(t *testing.T) {
 	}
 }
 
+// The schedule opens on the evenings still to come. The ones already served
+// are a click away, and stay shown after a save made while looking at them.
+func TestAdminScheduleHidesPastDinners(t *testing.T) {
+	h := newHarness(t)
+	c := h.client(t)
+	c.login("adm")
+	c.identify("Chef", "cecilia.dahl")
+
+	body := c.get("/admin?flik=schema").Body.String()
+	if strings.Contains(body, `id="team-2026-08-18"`) {
+		t.Error("an evening already served should be hidden by default")
+	}
+	if !strings.Contains(body, `id="team-`+shutDay+`"`) {
+		t.Error("today's dinner is not over yet and should be shown")
+	}
+	if !strings.Contains(body, "Visa 5 tidigare middagar") {
+		t.Error("the schedule should offer to show the five evenings already served")
+	}
+
+	body = c.get("/admin?flik=schema&tidigare=1").Body.String()
+	if !strings.Contains(body, `id="team-2026-08-04"`) {
+		t.Error("asking for past dinners should show the season's first evening")
+	}
+	if !strings.Contains(body, "Dölj tidigare middagar") {
+		t.Error("the schedule should offer to hide them again")
+	}
+
+	resp := c.post("/admin/schema", url.Values{
+		"date": {"2026-08-04"}, "flik": {"schema"}, "tidigare": {"1"}, "note": {"x"},
+	})
+	if loc := resp.Header().Get("Location"); !strings.Contains(loc, "tidigare=1") {
+		t.Errorf("a save among the past dinners should come back to them, got %q", loc)
+	}
+}
+
 // The rotation order is a sequence you rearrange, not a number you type, so
 // two teams can never end up sharing a place.
 func TestAdminReordersTheRotation(t *testing.T) {

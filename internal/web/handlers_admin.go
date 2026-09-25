@@ -114,10 +114,28 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request, v *view) {
 	tab := adminTab(r.URL.Query().Get("flik"))
 
 	var rows []scheduleRow
+	// Evenings already served are hidden unless asked for, so the schedule
+	// opens on what is still to come instead of on the season's first week.
+	// A season that is over altogether has nothing else to show, so it is
+	// shown whole.
+	showPast := r.URL.Query().Get("tidigare") == "1"
+	past := 0
 	if shown != nil && tab == "schema" {
-		var dinners []dinner.Dinner
+		var season []dinner.Dinner
 		for _, d := range world.Schedule.Dinners {
 			if d.Season.ID == shown.ID {
+				season = append(season, d)
+				if d.Over(v.Now) {
+					past++
+				}
+			}
+		}
+		if past == len(season) {
+			past = 0
+		}
+		var dinners []dinner.Dinner
+		for _, d := range season {
+			if showPast || past == 0 || !d.Over(v.Now) {
 				dinners = append(dinners, d)
 			}
 		}
@@ -177,6 +195,8 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request, v *view) {
 		"Seasons":  world.Seasons,
 		"Season":   shown,
 		"Rows":     rows,
+		"Past":     past,
+		"ShowPast": showPast,
 		"Standing": households,
 		"Requests": requests,
 		"Regulars": regulars,
@@ -378,6 +398,9 @@ func (s *Server) adminRedirect(w http.ResponseWriter, r *http.Request, saved str
 		if _, err := strconv.ParseInt(raw, 10, 64); err == nil {
 			q.Set("sasong", raw)
 		}
+	}
+	if r.FormValue("tidigare") == "1" {
+		q.Set("tidigare", "1")
 	}
 	q.Set("sparat", saved)
 	http.Redirect(w, r, "/admin?"+q.Encode()+"#"+tab, http.StatusSeeOther)

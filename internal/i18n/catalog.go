@@ -472,6 +472,8 @@ var catalog = map[string]entry{
 	"admin.schedule.breaks":           {"Uppehåll den här perioden:", "Breaks in this period:"},
 	"admin.schedule.breaks.tail":      {"Kvällarna där finns inte, och turordningen står stilla över dem.", "Those evenings do not exist, and the rotation stands still over them."},
 	"admin.schedule.export":           {"Exportera säsongen som CSV →", "Export the season as CSV →"},
+	"admin.schedule.past.show":        {"Visa %d tidigare middagar", "Show %d past dinners"},
+	"admin.schedule.past.hide":        {"Dölj tidigare middagar", "Hide past dinners"},
 	"admin.schedule.empty":            {"Lägg in en säsong nedan, så räknas kvällarna fram här.", "Add a season below and the evenings are worked out here."},
 
 	"admin.teams.count":          {"%d lag", "%d teams"},

@@ -51,6 +51,15 @@
 
 	{{if .Data.Rows}}
 	<p class="muted">{{t "admin.schedule.body"}}</p>
+	{{if .Data.Past}}
+	<p class="muted small">
+		{{if .Data.ShowPast}}
+		<a class="quiet-link" href="/admin?flik=schema{{with .Data.Season}}&amp;sasong={{.ID}}{{end}}">{{t "admin.schedule.past.hide"}}</a>
+		{{else}}
+		<a class="quiet-link" href="/admin?flik=schema{{with .Data.Season}}&amp;sasong={{.ID}}{{end}}&amp;tidigare=1">{{t "admin.schedule.past.show" .Data.Past}}</a>
+		{{end}}
+	</p>
+	{{end}}
 	<div class="schedule">
 		{{range .Data.Rows}}
 		{{$d := .Dinner}}
@@ -58,6 +67,7 @@
 			<input type="hidden" name="date" value="{{$d.Key}}">
 			<input type="hidden" name="flik" value="schema">
 			<input type="hidden" name="sasong" value="{{$d.Season.ID}}">
+			{{if $.Data.ShowPast}}<input type="hidden" name="tidigare" value="1">{{end}}
 			<div class="sched-when">
 				<strong>{{weekdayShort $d.Date}} {{dateShort $d.Date}}</strong>
 				<small class="muted">{{t "admin.schedule.week" $d.Week}}</small>
@@ -101,6 +111,7 @@
 			<input type="hidden" name="date" value="{{$d.Key}}">
 			<input type="hidden" name="flik" value="schema">
 			<input type="hidden" name="sasong" value="{{$d.Season.ID}}">
+			{{if $.Data.ShowPast}}<input type="hidden" name="tidigare" value="1">{{end}}
 			<button type="submit" class="link-button"
 			        data-confirm="{{t "admin.schedule.send.confirm" (dateShort $d.Date)}}">
 				{{if .Sent}}{{t "admin.schedule.sendagain"}}{{else}}{{t "admin.schedule.sendnow"}}{{end}}
