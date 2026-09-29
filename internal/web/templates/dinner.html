@@ -37,7 +37,8 @@
 		{{with .Data.Mine}}
 			{{if .People}}
 				<strong class="ok-text">{{t "dinner.mine"}}</strong>
-				— {{if .Adults}}{{count "adult" .Adults}}{{end}}{{if and .Adults .Children}} {{t "and"}} {{end}}{{if .Children}}{{count "child" .Children}}{{end}}, {{dietLabel .Diet}}.
+				— {{if .Adults}}{{count "adult" .Adults}}{{end}}{{if and .Adults .Children}} {{t "and"}} {{end}}{{if .Children}}{{count "child" .Children}}{{end}}{{if .Guests}} + {{count "guest" .Guests}}{{end}}, {{dietLabel .Diet}}.
+				{{with .GuestNames}}<br><span class="muted small">{{t "dinner.mine.guests" .}}</span>{{end}}
 				{{if .Standing}}<a href="/mina">{{t "dinner.mine.standing"}}</a>{{end}}
 			{{else}}
 				<strong>{{t "dinner.notcoming"}}</strong> {{t "dinner.notcoming.tail"}}
@@ -55,7 +56,7 @@
 		</div>
 		<form method="post" action="/middag/{{$d.Key}}">
 			{{template "countfields" dict "Form" .Data.Form "ID" "reg"
-				"Zero" (t "dinner.zero") "Split" (t "form.split.household")}}
+				"Zero" (t "dinner.zero") "Split" (t "form.split.household") "Guests" true}}
 			<div class="form-actions">
 				<button type="submit" class="button primary">{{t "dinner.save"}}</button>
 				<button type="submit" class="button ghost" name="action" value="decline"

@@ -58,6 +58,20 @@
 			input.addEventListener('input', update);
 		});
 		update();
+
+		// The guests' names only mean something once there are guests. A name
+		// already written stays visible, so it is never hidden away unseen.
+		var guests = group.querySelector('[data-guest-count]');
+		var names = group.querySelector('[data-guest-names]');
+		if (guests && names) {
+			var nameInput = names.querySelector('input');
+			var toggle = function () {
+				var n = parseInt(guests.value, 10);
+				names.hidden = !(n > 0) && !(nameInput && nameInput.value.trim());
+			};
+			guests.addEventListener('input', toggle);
+			toggle();
+		}
 	});
 
 	// --- Drag the cooking teams into order ----------------------------------

@@ -6,10 +6,13 @@
 {{/* Zero is what to say when nobody is filled in; it means something
      different on a standing registration than on one evening's form. Split is
      what to do when the party does not all eat the same thing, which differs
-     too: a guest can simply register twice, a household cannot. */}}
+     too: a guest can simply register twice, a household cannot. Guests turns
+     on the box for people a household brings along, which only makes sense
+     for one evening's answer: a standing registration is the household itself,
+     and a guest registering themselves is already the guest. */}}
 <div class="count-group" data-count-group
      data-count-zero="{{if .Zero}}{{.Zero}}{{else}}{{t "form.nobody"}}{{end}}">
-	<div class="count-grid count-grid-two">
+	<div class="count-grid {{if .Guests}}count-grid-three{{else}}count-grid-two{{end}}">
 		<div class="field count">
 			<label for="{{$id}}-adults">{{t "form.adults"}}</label>
 			<input id="{{$id}}-adults" name="adults" type="number" inputmode="numeric"
@@ -20,8 +23,25 @@
 			<input id="{{$id}}-children" name="children" type="number" inputmode="numeric"
 			       min="0" max="20" step="1" value="{{$f.Children}}" data-count="people">
 		</div>
+		{{if .Guests}}
+		<div class="field count">
+			<label for="{{$id}}-guests">{{t "form.guests"}}</label>
+			<input id="{{$id}}-guests" name="guests" type="number" inputmode="numeric"
+			       min="0" max="20" step="1" value="{{$f.Guests}}" data-count="people" data-guest-count>
+		</div>
+		{{end}}
 	</div>
 	<p class="hint count-hint" data-count-hint aria-live="polite"></p>
+	{{if .Guests}}
+	{{/* Who the guests are is only for the household's own memory: the page
+	     hides it while there are none, and nothing requires it. */}}
+	<div class="field" data-guest-names>
+		<label for="{{$id}}-guestnames">{{t "form.guestnames"}} <small>{{t "optional"}}</small></label>
+		<input id="{{$id}}-guestnames" name="guest_names" type="text" maxlength="300"
+		       value="{{$f.GuestNames}}" placeholder="{{t "form.guestnames.placeholder"}}">
+		<small class="hint">{{t "form.guestnames.hint"}}</small>
+	</div>
+	{{end}}
 
 	<fieldset class="diet">
 		<legend>{{t "form.diet"}}</legend>
@@ -59,6 +79,8 @@
 		{{if .Adults}}{{count "adult" .Adults}}{{end}}
 		{{if and .Adults .Children}} · {{end}}
 		{{if .Children}}{{count "child" .Children}}{{end}}
+		{{if and (or .Adults .Children) .Guests}} · {{end}}
+		{{if .Guests}}{{count "guest" .Guests}}{{end}}
 	</span>
 	<span class="attendee-diet">
 		<span class="chip chip-diet chip-{{.Diet}}">{{dietLabel .Diet}}</span>
@@ -78,6 +100,7 @@
 	</div>
 	<div class="stat"><strong>{{.Adults}}</strong><span>{{plural "adult" .Adults}}</span></div>
 	<div class="stat"><strong>{{.Children}}</strong><span>{{plural "child" .Children}}</span></div>
+	{{if .HouseGuests}}<div class="stat"><strong>{{.HouseGuests}}</strong><span>{{plural "guest" .HouseGuests}}</span></div>{{end}}
 </div>
 <div class="stats stats-diet">
 	{{range .Diets}}

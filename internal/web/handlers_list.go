@@ -162,6 +162,8 @@ func (s *Server) handleListCSV(w http.ResponseWriter, r *http.Request) {
 		i18n.T(lang, "csv.guest"),
 		i18n.T(lang, "csv.host"),
 		i18n.T(lang, "csv.standing"),
+		// Last, so the columns a spreadsheet already reads keep their places.
+		i18n.T(lang, "csv.guests"),
 	})
 	yes := i18n.T(lang, "yes")
 	for _, a := range sum.Attendees {
@@ -177,6 +179,7 @@ func (s *Server) handleListCSV(w http.ResponseWriter, r *http.Request) {
 			ifYes(a.Guest, yes),
 			a.Host,
 			ifYes(a.Standing, yes),
+			strconv.Itoa(a.Guests),
 		})
 	}
 }

@@ -403,3 +403,43 @@ func TestARegularApprovedAfterTheDeadlineIsNotOnTheListAlreadySent(t *testing.T)
 			sum.People)
 	}
 }
+
+// Guests a household brings along eat like everyone else, on the household's
+// diet, and are counted as visitors without being adults or children.
+func TestAHouseholdsGuestsAreCountedWithIt(t *testing.T) {
+	anna := member("anna", "Anna", 2, 1, store.DietVegetarian, "")
+	anna.Guests, anna.GuestNames = 2, "mormor och Lisa"
+	sum := resolve([]store.Registration{
+		anna,
+		guest("Kalle", "Anna", 1, 0, store.DietOmnivore, ""),
+	}, nil)
+
+	if sum.People != 6 {
+		t.Errorf("People = %d, want 6", sum.People)
+	}
+	if sum.Adults != 3 || sum.Children != 1 || sum.HouseGuests != 2 {
+		t.Errorf("adults/children/house guests = %d/%d/%d, want 3/1/2",
+			sum.Adults, sum.Children, sum.HouseGuests)
+	}
+	if sum.Guests != 3 {
+		t.Errorf("Guests = %d, want 3: the household's two and Kalle", sum.Guests)
+	}
+	if got := sum.Count(store.DietVegetarian); got != 5 {
+		t.Errorf("vegetarian portions = %d, want 5", got)
+	}
+	if a := sum.Attendees[0]; a.Guests != 2 || a.GuestNames != "mormor och Lisa" {
+		t.Errorf("attendee = %+v, want the guests kept", a)
+	}
+}
+
+// A household may come only as its guests' hosts in name: guests alone are
+// still somebody coming.
+func TestGuestsAloneAreAnAnswerForSomebody(t *testing.T) {
+	anna := member("anna", "Anna", 0, 0, store.DietOmnivore, "")
+	anna.Guests = 1
+	sum := resolve([]store.Registration{anna}, nil)
+	if len(sum.Attendees) != 1 || len(sum.Declined) != 0 || sum.People != 1 {
+		t.Errorf("attendees/declined/people = %d/%d/%d, want 1/0/1",
+			len(sum.Attendees), len(sum.Declined), sum.People)
+	}
+}

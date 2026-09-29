@@ -104,9 +104,14 @@ type Registration struct {
 	Host      string
 	Adults    int
 	Children  int
-	Diet      Diet
-	Note      string
-	Token     string
+	// Guests are people a household brings along for this one evening. They
+	// are counted with everyone else; GuestNames is only there so the
+	// household can see later whom they said they were bringing.
+	Guests     int
+	GuestNames string
+	Diet       Diet
+	Note       string
+	Token      string
 	// StandingToken names the standing registration this answer is an
 	// exception to, and is only ever set on a guest's. A household's
 	// exceptions are found by its account; a regular guest has no account, so
@@ -119,7 +124,7 @@ type Registration struct {
 }
 
 // People is how many will eat.
-func (r Registration) People() int { return r.Adults + r.Children }
+func (r Registration) People() int { return r.Adults + r.Children + r.Guests }
 
 // Attending reports whether anyone is coming at all.
 func (r Registration) Attending() bool { return r.People() > 0 }
@@ -325,6 +330,8 @@ CREATE TABLE IF NOT EXISTS registrations (
 	host        TEXT NOT NULL DEFAULT '',
 	adults      INTEGER NOT NULL DEFAULT 0,
 	children    INTEGER NOT NULL DEFAULT 0,
+	guests      INTEGER NOT NULL DEFAULT 0,
+	guest_names TEXT NOT NULL DEFAULT '',
 	diet        TEXT NOT NULL DEFAULT 'allatare',
 	note        TEXT NOT NULL DEFAULT '',
 	token       TEXT NOT NULL DEFAULT '',
@@ -549,14 +556,21 @@ func prepare(db *sql.DB) error {
 	if exists, err := hasTable(db, "registrations"); err != nil {
 		return err
 	} else if exists {
-		has, err := hasColumn(db, "registrations", "standing_token")
-		if err != nil {
-			return err
-		}
-		if !has {
-			if _, err := db.Exec(
-				`ALTER TABLE registrations ADD COLUMN standing_token TEXT NOT NULL DEFAULT ''`); err != nil {
-				return fmt.Errorf("add registrations.standing_token: %w", err)
+		for _, c := range []struct{ name, def string }{
+			{"standing_token", `TEXT NOT NULL DEFAULT ''`},
+			// And the guests a household brings along for one evening.
+			{"guests", `INTEGER NOT NULL DEFAULT 0`},
+			{"guest_names", `TEXT NOT NULL DEFAULT ''`},
+		} {
+			has, err := hasColumn(db, "registrations", c.name)
+			if err != nil {
+				return err
+			}
+			if has {
+				continue
+			}
+			if _, err := db.Exec(`ALTER TABLE registrations ADD COLUMN ` + c.name + ` ` + c.def); err != nil {
+				return fmt.Errorf("add registrations.%s: %w", c.name, err)
 			}
 		}
 	}
@@ -1049,14 +1063,15 @@ func (s *Store) SaveOverride(ctx context.Context, o Override) error {
 // ---------------------------------------------------------- registrations --
 
 const regCols = `id, date, kind, member, mm_user_id, name, apartment, host,
-	adults, children, diet, note, token, standing_token, created_at, updated_at,
+	adults, children, guests, guest_names, diet, note, token, standing_token, created_at, updated_at,
 	created_ip`
 
 func scanReg(row interface{ Scan(...any) error }) (Registration, error) {
 	var r Registration
 	var created, updated string
 	err := row.Scan(&r.ID, &r.Date, &r.Kind, &r.Member, &r.MMUserID, &r.Name,
-		&r.Apartment, &r.Host, &r.Adults, &r.Children, &r.Diet, &r.Note, &r.Token,
+		&r.Apartment, &r.Host, &r.Adults, &r.Children, &r.Guests, &r.GuestNames,
+		&r.Diet, &r.Note, &r.Token,
 		&r.StandingToken, &created, &updated, &r.CreatedIP)
 	if err != nil {
 		return r, err
@@ -1203,16 +1218,17 @@ func (s *Store) SaveRegistration(ctx context.Context, r Registration) error {
 	}
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO registrations (`+regCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		`INSERT INTO registrations (`+regCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   mm_user_id=excluded.mm_user_id,
 		   name=excluded.name, apartment=excluded.apartment, host=excluded.host,
 		   adults=excluded.adults, children=excluded.children,
+		   guests=excluded.guests, guest_names=excluded.guest_names,
 		   diet=excluded.diet, note=excluded.note,
 		   standing_token=excluded.standing_token, updated_at=excluded.updated_at`,
 		r.ID, r.Date, r.Kind, r.Member, r.MMUserID, r.Name, r.Apartment, r.Host,
-		r.Adults, r.Children, r.Diet, r.Note, r.Token, r.StandingToken,
-		utc(r.CreatedAt), utc(r.UpdatedAt), r.CreatedIP)
+		r.Adults, r.Children, r.Guests, r.GuestNames, r.Diet, r.Note, r.Token,
+		r.StandingToken, utc(r.CreatedAt), utc(r.UpdatedAt), r.CreatedIP)
 	if err != nil {
 		return err
 	}

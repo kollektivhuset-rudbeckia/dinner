@@ -63,7 +63,7 @@
 				{{with .Mine}}
 					{{if .People}}
 						<span class="ok-text">{{t "index.mine"}}</span>
-						{{if .Adults}}{{count "adult" .Adults}}{{end}}{{if and .Adults .Children}}, {{end}}{{if .Children}}{{count "child" .Children}}{{end}}
+						{{if .Adults}}{{count "adult" .Adults}}{{end}}{{if and .Adults .Children}}, {{end}}{{if .Children}}{{count "child" .Children}}{{end}}{{if .Guests}} + {{count "guest" .Guests}}{{end}}
 						{{if .Standing}}<span class="chip" title="{{t "index.mine.standing"}}">{{t "attendee.standing"}}</span>{{end}}
 					{{else}}
 						<span class="muted">{{t "index.declined"}}</span>

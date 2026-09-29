@@ -70,6 +70,9 @@ func (s *Server) notifyRegistered(reg store.Registration, d dinner.Dinner) {
 			row(i18n.T(lang, "dm.where"), s.cfg.Dinner.Location)
 		}
 		row(i18n.T(lang, "dm.people"), headcount(lang, reg))
+		if reg.GuestNames != "" {
+			row(i18n.T(lang, "dm.guests"), reg.GuestNames)
+		}
 		row(i18n.T(lang, "dm.diet"), DietLabel(lang, reg.Diet))
 		if reg.Note != "" {
 			row(i18n.T(lang, "dm.note"), reg.Note)
@@ -97,17 +100,20 @@ func (s *Server) notifyRegistered(reg store.Registration, d dinner.Dinner) {
 		"coming", reg.Attending(), "language", lang)
 }
 
-// headcount is the household in words: how many adults and how many children.
+// headcount is the household in words: how many adults, how many children and
+// how many guests they bring.
 func headcount(lang i18n.Lang, reg store.Registration) string {
-	switch {
-	case reg.Children == 0:
-		return i18n.Count(lang, "adult", reg.Adults)
-	case reg.Adults == 0:
-		return i18n.Count(lang, "child", reg.Children)
-	default:
-		return i18n.Count(lang, "adult", reg.Adults) + ", " +
-			i18n.Count(lang, "child", reg.Children)
+	var parts []string
+	if reg.Adults > 0 || (reg.Children == 0 && reg.Guests == 0) {
+		parts = append(parts, i18n.Count(lang, "adult", reg.Adults))
 	}
+	if reg.Children > 0 {
+		parts = append(parts, i18n.Count(lang, "child", reg.Children))
+	}
+	if reg.Guests > 0 {
+		parts = append(parts, i18n.Count(lang, "guest", reg.Guests))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // memberLang is the language to write to a household in: the one they have set

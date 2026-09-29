@@ -82,7 +82,7 @@
 				<strong>{{titleCase (dateLong $d.Date)}}</strong>
 				{{with .Mine}}
 					{{if .People}}
-						<span class="chip">{{if .Adults}}{{count "adult" .Adults}}{{end}}{{if and .Adults .Children}} · {{end}}{{if .Children}}{{count "child" .Children}}{{end}}</span>
+						<span class="chip">{{if .Adults}}{{count "adult" .Adults}}{{end}}{{if and .Adults .Children}} · {{end}}{{if .Children}}{{count "child" .Children}}{{end}}{{if .Guests}} + {{count "guest" .Guests}}{{end}}</span>
 						{{if .Standing}}<span class="chip">{{t "attendee.standing"}}</span>{{end}}
 					{{else}}
 						<span class="chip">{{t "mine.notcoming"}}</span>

@@ -196,8 +196,12 @@ func (s *Server) handleDinner(w http.ResponseWriter, r *http.Request, v *view) {
 type regForm struct {
 	Adults   int
 	Children int
-	Diet     store.Diet
-	Note     string
+	// Guests and GuestNames are the people a household brings along, which is
+	// only asked on one evening's answer.
+	Guests     int
+	GuestNames string
+	Diet       store.Diet
+	Note       string
 	// Answered marks a household that has registered for this evening, as
 	// opposed to seeing its standing registration pre-filled.
 	Answered bool
@@ -211,7 +215,8 @@ type regForm struct {
 func (s *Server) formFor(ctx context.Context, d dinner.Dinner, id auth.Identity) regForm {
 	if reg, err := s.store.MemberRegistration(ctx, d.Key, id.MMUsername); err == nil {
 		return regForm{
-			Adults: reg.Adults, Children: reg.Children, Diet: reg.Diet,
+			Adults: reg.Adults, Children: reg.Children,
+			Guests: reg.Guests, GuestNames: reg.GuestNames, Diet: reg.Diet,
 			Note: reg.Note, Answered: true,
 		}
 	} else if !errors.Is(err, store.ErrNotFound) {
@@ -307,19 +312,21 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request, v *view)
 
 	now := s.now()
 	reg := store.Registration{
-		ID:        auth.ID(),
-		Date:      d.Key,
-		Kind:      store.KindMember,
-		Member:    v.Ident.MMUsername,
-		MMUserID:  v.Ident.MMUserID,
-		Name:      v.Ident.Name,
-		Apartment: v.Ident.Apartment,
-		Adults:    form.Adults,
-		Children:  form.Children,
-		Diet:      form.Diet,
-		Note:      form.Note,
-		Token:     auth.Token(),
-		CreatedAt: now, UpdatedAt: now,
+		ID:         auth.ID(),
+		Date:       d.Key,
+		Kind:       store.KindMember,
+		Member:     v.Ident.MMUsername,
+		MMUserID:   v.Ident.MMUserID,
+		Name:       v.Ident.Name,
+		Apartment:  v.Ident.Apartment,
+		Adults:     form.Adults,
+		Children:   form.Children,
+		Guests:     form.Guests,
+		GuestNames: form.GuestNames,
+		Diet:       form.Diet,
+		Note:       form.Note,
+		Token:      auth.Token(),
+		CreatedAt:  now, UpdatedAt: now,
 		CreatedIP: s.clientIP(r),
 	}
 	if err := s.store.SaveRegistration(ctx, reg); err != nil {
@@ -327,7 +334,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request, v *view)
 		return
 	}
 	s.log.Info("registration saved", "date", d.Key, "member", reg.Member,
-		"people", form.Adults+form.Children, "declined", declined)
+		"people", form.Adults+form.Children+form.Guests, "declined", declined)
 	// The confirmation goes out in the chat the household already reads, with
 	// the evening attached for their calendar. It is sent in the background:
 	// the answer is saved either way, and nobody should wait on the chat
@@ -342,13 +349,24 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request, v *view)
 // so validation can refuse it. Quietly turning something unrecognised into the
 // unrestricted meal would record a vegan as eating everything, which is the
 // one mistake here with real consequences.
+//
+// Guests are read wherever they are sent but only offered on a household's
+// answer for one evening; the other forms have no such field, so they read as
+// none.
 func readForm(r *http.Request) regForm {
-	return regForm{
-		Adults:   formInt(r, "adults"),
-		Children: formInt(r, "children"),
-		Diet:     store.Diet(strings.TrimSpace(r.FormValue("diet"))),
-		Note:     strings.TrimSpace(r.FormValue("note")),
+	f := regForm{
+		Adults:     formInt(r, "adults"),
+		Children:   formInt(r, "children"),
+		Guests:     formInt(r, "guests"),
+		GuestNames: strings.TrimSpace(r.FormValue("guest_names")),
+		Diet:       store.Diet(strings.TrimSpace(r.FormValue("diet"))),
+		Note:       strings.TrimSpace(r.FormValue("note")),
 	}
+	// Names without anybody to put them on would be kept and never shown.
+	if f.Guests <= 0 {
+		f.GuestNames = ""
+	}
+	return f
 }
 
 // maxPeople is a sanity bound. A household of twenty is already implausible;
@@ -362,13 +380,13 @@ const maxNote = 300
 // the reader's language, or an empty string when all is well.
 func validateParty(lang i18n.Lang, f regForm) string {
 	switch {
-	case f.Adults < 0 || f.Children < 0:
+	case f.Adults < 0 || f.Children < 0 || f.Guests < 0:
 		return i18n.T(lang, "register.negative")
-	case f.Adults > maxPeople || f.Children > maxPeople:
+	case f.Adults > maxPeople || f.Children > maxPeople || f.Guests > maxPeople:
 		return i18n.T(lang, "register.toomany", maxPeople)
 	case !f.Diet.Valid():
 		return i18n.T(lang, "register.nodiet")
-	case len([]rune(f.Note)) > maxNote:
+	case len([]rune(f.Note)) > maxNote, len([]rune(f.GuestNames)) > maxNote:
 		return i18n.T(lang, "register.longnote", maxNote)
 	}
 	return ""

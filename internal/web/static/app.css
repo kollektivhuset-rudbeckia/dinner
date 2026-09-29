@@ -513,6 +513,7 @@ label { font-size: .85rem; }
 	grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
 }
 .count-grid-two { grid-template-columns: repeat(2, minmax(6rem, 12rem)); }
+.count-grid-three { grid-template-columns: repeat(3, minmax(5rem, 12rem)); }
 
 /* One diet for the whole registration. Radios rather than a select, because
    the explanation of what each one means is the part people actually read. */

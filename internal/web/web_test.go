@@ -303,6 +303,46 @@ func TestRegisterForOneDinner(t *testing.T) {
 	}
 }
 
+// A household can bring guests for one evening, and write down who they are so
+// the page can remind them later.
+func TestRegisterWithGuests(t *testing.T) {
+	h := newHarness(t)
+	c := h.client(t)
+	c.member("Anna Andersson", "anna.andersson")
+
+	form := party(2, 0, store.DietOmnivore, "")
+	form.Set("guests", "2")
+	form.Set("guest_names", "Mormor och Lisa")
+	if rec := c.post("/middag/"+openDay, form); rec.Code != http.StatusSeeOther {
+		t.Fatalf("register = %d — %s", rec.Code, rec.Body.String())
+	}
+
+	got, err := h.store.MemberRegistration(context.Background(), openDay, "anna.andersson")
+	if err != nil {
+		t.Fatalf("stored registration: %v", err)
+	}
+	if got.Guests != 2 || got.GuestNames != "Mormor och Lisa" {
+		t.Errorf("stored %+v", got)
+	}
+
+	body := c.get("/middag/" + openDay).Body.String()
+	for _, want := range []string{"2 gäster", "Mormor och Lisa", `name="guests"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the evening's page should show %q", want)
+		}
+	}
+
+	// Taking the guests away again takes their names with them.
+	form.Set("guests", "0")
+	if rec := c.post("/middag/"+openDay, form); rec.Code != http.StatusSeeOther {
+		t.Fatalf("change = %d", rec.Code)
+	}
+	got, _ = h.store.MemberRegistration(context.Background(), openDay, "anna.andersson")
+	if got.Guests != 0 || got.GuestNames != "" {
+		t.Errorf("after removing the guests: %+v", got)
+	}
+}
+
 func TestRegistrationIsRefusedAfterTheDeadline(t *testing.T) {
 	h := newHarness(t)
 	c := h.client(t)
@@ -335,6 +375,8 @@ func TestImpossibleRegistrationsAreRefused(t *testing.T) {
 		// the one silent mistake here that matters.
 		{"a diet nobody offers", url.Values{"adults": {"2"}, "diet": {"makrobiotisk"}}},
 		{"no diet at all", url.Values{"adults": {"2"}}},
+		{"negative guests", url.Values{"adults": {"1"}, "guests": {"-1"}, "diet": {"allatare"}}},
+		{"absurdly many guests", url.Values{"adults": {"1"}, "guests": {"400"}, "diet": {"allatare"}}},
 		{"a note longer than the field allows", url.Values{
 			"adults": {"1"}, "diet": {"allatare"},
 			"note": {strings.Repeat("ä", 301)},

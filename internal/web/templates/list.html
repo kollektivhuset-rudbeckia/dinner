@@ -38,7 +38,8 @@
 	<p class="sheet-line">
 		{{t "list.total" (people $sum.People) (count "household" $sum.Households)}}
 		{{- if $sum.Guests}}{{t "list.total.guests" (count "guest" $sum.Guests)}}{{end}}:
-		{{t "list.total.split" (count "adult" $sum.Adults) (count "child" $sum.Children)}}
+		{{if $sum.HouseGuests}}{{t "list.total.split.guests" (count "adult" $sum.Adults) (count "child" $sum.Children) (count "guest" $sum.HouseGuests)}}
+		{{- else}}{{t "list.total.split" (count "adult" $sum.Adults) (count "child" $sum.Children)}}{{end}}
 		{{if $sum.People}}
 		{{t "list.portions"}}
 		{{$first := true}}
@@ -64,6 +65,7 @@
 			<tr>
 				<th>{{t "list.col.name"}}</th><th>{{t "list.col.apartment"}}</th>
 				<th class="num">{{t "form.adults"}}</th><th class="num">{{t "form.children"}}</th>
+				{{if $sum.HouseGuests}}<th class="num">{{t "form.guests"}}</th>{{end}}
 				<th>{{t "list.col.diet"}}</th><th>{{t "list.col.note"}}</th>
 				{{if $.Role.Admin}}<th class="no-print"><span class="visually-hidden">{{t "list.col.action"}}</span></th>{{end}}
 			</tr>
@@ -79,6 +81,7 @@
 				<td>{{.Apartment}}</td>
 				<td class="num">{{if .Adults}}{{.Adults}}{{end}}</td>
 				<td class="num">{{if .Children}}{{.Children}}{{end}}</td>
+				{{if $sum.HouseGuests}}<td class="num">{{if .Guests}}{{.Guests}}{{end}}</td>{{end}}
 				<td>{{dietLabel .Diet}}</td>
 				<td>{{.Note}}</td>
 				{{if $.Role.Admin}}
@@ -100,6 +103,7 @@
 			<tr>
 				<th>{{t "list.sum"}}</th><th></th>
 				<th class="num">{{$sum.Adults}}</th><th class="num">{{$sum.Children}}</th>
+				{{if $sum.HouseGuests}}<th class="num">{{$sum.HouseGuests}}</th>{{end}}
 				<th></th><th></th>{{if .Role.Admin}}<th class="no-print"></th>{{end}}
 			</tr>
 		</tfoot>

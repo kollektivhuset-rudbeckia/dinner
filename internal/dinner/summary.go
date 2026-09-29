@@ -18,8 +18,12 @@ type Attendee struct {
 	Apartment string
 	Adults    int
 	Children  int
-	Diet      store.Diet
-	Note      string
+	// Guests are the people a household brings along for this evening, and
+	// GuestNames who they are, if the household wrote it down.
+	Guests     int
+	GuestNames string
+	Diet       store.Diet
+	Note       string
 	// Host is the member a guest is visiting.
 	Host  string
 	Guest bool
@@ -33,7 +37,7 @@ type Attendee struct {
 }
 
 // People is how many will eat.
-func (a Attendee) People() int { return a.Adults + a.Children }
+func (a Attendee) People() int { return a.Adults + a.Children + a.Guests }
 
 // Diet is chosen once for the whole registration, so every one of these
 // people is served the same meal.
@@ -50,7 +54,11 @@ type Summary struct {
 	Households int
 	Adults     int
 	Children   int
-	People     int
+	// HouseGuests are the guests households bring along. A household only
+	// says how many, not whether they are adults or children, so they are
+	// counted on their own and are not in Adults or Children.
+	HouseGuests int
+	People      int
 
 	// Diets counts the people, not the households, behind each meal. Every
 	// diet is present even at zero, so the cooking team reads the same rows
@@ -58,7 +66,8 @@ type Summary struct {
 	// wondering whether it was left out.
 	Diets []DietCount
 
-	// Guests counts visitors, who are already included in the totals above.
+	// Guests counts visitors — the ones who registered themselves and the
+	// ones a household brought — who are already included in the totals above.
 	Guests int
 	// Notes are the free-text dietary restrictions, one per household that
 	// wrote one.
@@ -138,6 +147,7 @@ func Resolve(regs []store.Registration, standing []store.Standing, closes time.T
 		s.Households++
 		s.Adults += a.Adults
 		s.Children += a.Children
+		s.HouseGuests += a.Guests
 		diet := a.Diet
 		if !diet.Valid() {
 			// A blank or unknown diet has to be fed something, and the meal
@@ -148,6 +158,8 @@ func Resolve(regs []store.Registration, standing []store.Standing, closes time.T
 		households[diet]++
 		if a.Guest {
 			s.Guests += a.People()
+		} else {
+			s.Guests += a.Guests
 		}
 		if t := strings.TrimSpace(a.Note); t != "" {
 			s.Notes = append(s.Notes, Note{Name: a.Name, Text: t})
@@ -157,7 +169,8 @@ func Resolve(regs []store.Registration, standing []store.Standing, closes time.T
 	for _, r := range regs {
 		add(Attendee{
 			ID: r.ID, Name: r.Name, Apartment: r.Apartment,
-			Adults: r.Adults, Children: r.Children, Diet: r.Diet,
+			Adults: r.Adults, Children: r.Children,
+			Guests: r.Guests, GuestNames: r.GuestNames, Diet: r.Diet,
 			Note: r.Note, Host: r.Host, Guest: r.Guest(), Member: r.Member,
 		})
 	}
@@ -188,7 +201,7 @@ func Resolve(regs []store.Registration, standing []store.Standing, closes time.T
 		})
 	}
 
-	s.People = s.Adults + s.Children
+	s.People = s.Adults + s.Children + s.HouseGuests
 	for _, d := range store.Diets {
 		s.Diets = append(s.Diets, DietCount{
 			Diet: d, People: people[d], Households: households[d],
