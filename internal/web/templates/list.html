@@ -33,6 +33,9 @@
 	<p class="alert alert-warn no-print">{{t "list.wait" (dateTime $d.Closes)}}</p>
 	{{end}}
 
+	{{if .Data.Added}}<p class="alert alert-ok no-print" role="status">{{t "list.late.added"}}</p>{{end}}
+	{{if .Data.Removed}}<p class="alert alert-ok no-print" role="status">{{t "list.late.removed"}}</p>{{end}}
+
 	<h2 class="sheet-title">{{t "list.howmuch"}}</h2>
 	{{template "totals" $sum}}
 	<p class="sheet-line">
@@ -67,7 +70,7 @@
 				<th class="num">{{t "form.adults"}}</th><th class="num">{{t "form.children"}}</th>
 				{{if $sum.HouseGuests}}<th class="num">{{t "form.guests"}}</th>{{end}}
 				<th>{{t "list.col.diet"}}</th><th>{{t "list.col.note"}}</th>
-				{{if $.Role.Admin}}<th class="no-print"><span class="visually-hidden">{{t "list.col.action"}}</span></th>{{end}}
+				{{if or $.Role.Admin $.Data.Team}}<th class="no-print"><span class="visually-hidden">{{t "list.col.action"}}</span></th>{{end}}
 			</tr>
 		</thead>
 		<tbody>
@@ -77,6 +80,7 @@
 					{{.Name}}
 					{{if .Guest}}<small class="muted">{{if .Host}}{{t "attendee.guest.of" .Host}}{{else}}{{t "attendee.guest"}}{{end}}</small>{{end}}
 					{{if .Standing}}<small class="muted">{{t "list.standing"}}</small>{{end}}
+					{{if .Late}}<small class="muted">{{t "list.late.mark"}}</small>{{end}}
 				</td>
 				<td>{{.Apartment}}</td>
 				<td class="num">{{if .Adults}}{{.Adults}}{{end}}</td>
@@ -84,12 +88,20 @@
 				{{if $sum.HouseGuests}}<td class="num">{{if .Guests}}{{.Guests}}{{end}}</td>{{end}}
 				<td>{{dietLabel .Diet}}</td>
 				<td>{{.Note}}</td>
-				{{if $.Role.Admin}}
+				{{if or $.Role.Admin $.Data.Team}}
 				<td class="no-print">
-					{{if .ID}}
+					{{if and $.Role.Admin .ID}}
 					<form method="post" action="/admin/anmalan">
 						<input type="hidden" name="id" value="{{.ID}}">
 						<input type="hidden" name="flik" value="schema">
+						<button type="submit" class="link-button danger-text"
+						        data-confirm="{{t "list.remove.confirm" .Name}}">{{t "remove"}}</button>
+					</form>
+					{{else if .Late}}
+					{{/* The team may take back only what it wrote in itself. */}}
+					<form method="post" action="/middag/{{$d.Key}}/lista/ta-bort">
+						<input type="hidden" name="id" value="{{.ID}}">
+						{{with $.Data.Key}}<input type="hidden" name="nyckel" value="{{.}}">{{end}}
 						<button type="submit" class="link-button danger-text"
 						        data-confirm="{{t "list.remove.confirm" .Name}}">{{t "remove"}}</button>
 					</form>
@@ -104,7 +116,7 @@
 				<th>{{t "list.sum"}}</th><th></th>
 				<th class="num">{{$sum.Adults}}</th><th class="num">{{$sum.Children}}</th>
 				{{if $sum.HouseGuests}}<th class="num">{{$sum.HouseGuests}}</th>{{end}}
-				<th></th><th></th>{{if .Role.Admin}}<th class="no-print"></th>{{end}}
+				<th></th><th></th>{{if or .Role.Admin .Data.Team}}<th class="no-print"></th>{{end}}
 			</tr>
 		</tfoot>
 	</table>
@@ -124,6 +136,38 @@
 		{{.Site.HouseName}} · {{t "list.printed" (dateTime .Now)}}
 	</footer>
 </div>
+
+{{if .Data.AddLate}}
+{{/* Somebody forgot to register and told the cooking team instead. The team
+     writes them in here, after the deadline, so the list says who ate. */}}
+<section class="panel form-panel no-print" id="efteranmalan">
+	<div class="panel-head">
+		<h2>{{t "list.late.title"}}</h2>
+	</div>
+	<p class="muted">{{t "list.late.body"}}</p>
+	{{with .Data.Error}}<p class="alert alert-error" role="alert">{{.}}</p>{{end}}
+	<form method="post" action="/middag/{{$d.Key}}/lista#efteranmalan">
+		{{with .Data.Key}}<input type="hidden" name="nyckel" value="{{.}}">{{end}}
+		<div class="field">
+			<label for="late-name">{{t "list.late.name"}}</label>
+			<input id="late-name" name="name" type="text" maxlength="100" required
+			       autocomplete="off" value="{{.Data.LateForm.Name}}" placeholder="Anna Andersson">
+		</div>
+		<div class="field">
+			<label for="late-apartment">{{t "ident.apartment"}} <small>{{t "optional"}}</small></label>
+			<input id="late-apartment" name="apartment" type="text" maxlength="100"
+			       autocomplete="off" value="{{.Data.LateForm.Apartment}}" placeholder="1403">
+		</div>
+		{{template "countfields" dict "Form" .Data.LateForm "ID" "late"
+			"Split" (t "list.late.split")}}
+		<div class="form-actions">
+			<button type="submit" class="button primary">{{t "list.late.submit"}}</button>
+		</div>
+	</form>
+</section>
+{{else if and .Data.Team .Data.Open}}
+<p class="hint no-print">{{t "list.late.later" (dateTime $d.Closes)}}</p>
+{{end}}
 
 <section class="export no-print">
 	<h2 class="section-title">{{t "list.export"}}</h2>

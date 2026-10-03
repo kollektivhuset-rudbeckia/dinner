@@ -23,12 +23,17 @@ import (
 )
 
 // Kind separates a household in the house from a visitor who registered on the
-// public page.
+// public page, and both from someone the cooking team put on the list itself.
 type Kind string
 
 const (
 	KindMember Kind = "member"
 	KindGuest  Kind = "guest"
+	// KindLate is a party the cooking team added after registration closed:
+	// somebody who forgot and told the team instead. It hangs on no account
+	// and no token — the team typed a name, and the team can take it away
+	// again — so saving one always inserts a row of its own.
+	KindLate Kind = "late"
 )
 
 // Status says whether a standing registration may be counted yet.
@@ -131,6 +136,9 @@ func (r Registration) Attending() bool { return r.People() > 0 }
 
 // Guest reports whether this came in through the public page.
 func (r Registration) Guest() bool { return r.Kind == KindGuest }
+
+// Late reports whether the cooking team added this after registration closed.
+func (r Registration) Late() bool { return r.Kind == KindLate }
 
 // Standing is a household's default answer for every dinner on one weekday —
 // the replacement for the permanent-registration sheet. A registration for a

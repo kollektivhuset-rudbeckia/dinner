@@ -327,6 +327,15 @@ Länken i meddelandet är signerad och öppnar **den kvällens lista och inget
 annat**. Lagledaren behöver alltså inte leta rätt på husets lösenord för att se
 vad hen ska laga.
 
+**Den som glömt att anmäla sig** brukar höra av sig direkt till lagledaren. När
+anmälan har stängt finns därför en ruta under listan där matlaget skriver in
+dem själva — namn, lägenhet, antal och kosthållning — så att summorna stämmer
+med vem som faktiskt äter, även i efterhand. Rutan syns för den som öppnat
+listan från länken i meddelandet, för lagledaren när hen är inloggad och för
+administratören, och bara när anmälan har stängt; innan dess anmäler sig
+hushållet självt. På listan står de som *tillagd av matlaget*, och matlaget kan
+ta bort dem igen — men bara dem, aldrig ett hushålls egen anmälan.
+
 Har meddelandet kommit bort går det att skicka om från schemat i
 administrationen. Utan Mattermost fungerar allt annat som vanligt; utskicket
 skrivs bara i loggen, och varje sida säger *Utan utskick* nere i foten.

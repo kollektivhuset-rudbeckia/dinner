@@ -6,10 +6,13 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/O5ten/dinners/internal/auth"
 	"github.com/O5ten/dinners/internal/dinner"
 	"github.com/O5ten/dinners/internal/i18n"
+	"github.com/O5ten/dinners/internal/store"
 )
 
 // listKeyPurpose namespaces the capability that opens one evening's list.
@@ -46,6 +49,14 @@ type listRequest struct {
 	Summary dinner.Summary
 	// ViaKey means the reader followed the mailed link rather than logging in.
 	ViaKey bool
+	// Key is the signed key the reader presented, when it is good for this
+	// evening, whether or not they are also logged in. It is carried on every
+	// link and form the page offers, so the leader keeps their access.
+	Key string
+	// Team means the reader is the evening's cooking team: they came by the
+	// key, or they are its leader or the administrator. Only the team may put
+	// somebody on the list once registration has closed.
+	Team bool
 }
 
 // resolveList works out who is asking and about which evening. It answers the
@@ -54,7 +65,12 @@ func (s *Server) resolveList(w http.ResponseWriter, r *http.Request) (*listReque
 	ctx := r.Context()
 	date := r.PathValue("date")
 	role := s.guard.Role(r)
-	viaKey := s.guard.CheckKey(listKeyPurpose, date, r.URL.Query().Get("nyckel"))
+	// FormValue rather than the query: the team's own forms post the key back.
+	key := r.FormValue("nyckel")
+	viaKey := s.guard.CheckKey(listKeyPurpose, date, key)
+	if !viaKey {
+		key = ""
+	}
 
 	if !role.LoggedIn() && !viaKey {
 		http.Redirect(w, r, "/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusSeeOther)
@@ -80,7 +96,14 @@ func (s *Server) resolveList(w http.ResponseWriter, r *http.Request) (*listReque
 	v := s.newView(r, role)
 	v.GuestOpen = world.Settings.GuestOpen
 	v.Bare = viaKey && !role.LoggedIn()
-	return &listRequest{View: v, Dinner: d, Summary: sum, ViaKey: v.Bare}, true
+	// A leader who is logged in and has said who they are is the team too,
+	// without having to dig out the mail.
+	leader := d.Team != nil && d.Team.LeaderUsername != "" &&
+		store.Member(v.Ident.MMUsername) == d.Team.LeaderUsername
+	return &listRequest{
+		View: v, Dinner: d, Summary: sum, ViaKey: v.Bare, Key: key,
+		Team: viaKey || leader || role.Admin(),
+	}, true
 }
 
 // handleList serves the printable list. It is the one page that two very
@@ -91,6 +114,12 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	s.renderList(w, r, req, lateForm{regForm: regForm{Adults: 1, Diet: store.DietOmnivore}}, "", http.StatusOK)
+}
+
+func (s *Server) renderList(w http.ResponseWriter, r *http.Request, req *listRequest,
+	late lateForm, problem string, status int) {
+
 	v, d := req.View, req.Dinner
 	v.Title = i18n.T(v.Lang, "list.title") + " " + i18n.DateLong(v.Lang, d.Date)
 
@@ -98,7 +127,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	// leader following the mailed link can fetch the file too.
 	csvPath := "/middag/" + d.Key + "/lista.csv"
 	if req.ViaKey {
-		csvPath += "?nyckel=" + url.QueryEscape(r.URL.Query().Get("nyckel"))
+		csvPath += "?nyckel=" + url.QueryEscape(req.Key)
 	}
 
 	v.Data = map[string]any{
@@ -117,8 +146,176 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		// only the team has a reason for one.
 		"CSVLive": req.ViaKey || v.Role.Admin(),
 		"CSVURL":  s.listCSVURL(d),
+		// Team may take away the parties it added itself; AddLate is whether
+		// it may add one right now.
+		"Team":     req.Team,
+		"AddLate":  req.Team && lateWindow(d, v.Now),
+		"Key":      req.Key,
+		"LateForm": late,
+		"Error":    problem,
+		"Added":    r.URL.Query().Get("tillagd") != "",
+		"Removed":  r.URL.Query().Get("borttagen") != "",
 	}
-	s.render(w, r, http.StatusOK, "list.html", v)
+	s.render(w, r, status, "list.html", v)
+}
+
+// lateForm is the cooking team's form for somebody who forgot to register:
+// the usual counts and diet, and a name, since there is no account to take
+// one from.
+type lateForm struct {
+	regForm
+	Name      string
+	Apartment string
+}
+
+// maxLateName bounds the typed name and flat number, which are printed on the
+// list.
+const maxLateName = 100
+
+// lateWindow is when the team may add to the list by hand: once households can
+// no longer do it themselves, for as long as the evening is not cancelled.
+// That includes after the meal, so the list ends up matching who actually ate.
+func lateWindow(d dinner.Dinner, now time.Time) bool {
+	return !d.Cancelled && !d.Open(now)
+}
+
+// listBack is the list's own address with what the reader came in with, so a
+// leader who is not logged in lands on the page they were on.
+func listBack(req *listRequest, flag string) string {
+	q := url.Values{flag: {"1"}}
+	if req.Key != "" {
+		q.Set("nyckel", req.Key)
+	}
+	return "/middag/" + req.Dinner.Key + "/lista?" + q.Encode()
+}
+
+// handleListAdd lets the cooking team put somebody on the list after
+// registration has closed. Households often forget and tell the leader
+// instead; this is where the leader writes them in, so the totals and the
+// season's records say who really ate.
+func (s *Server) handleListAdd(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		s.errorPage(w, r, http.StatusBadRequest, "error.form", "error.form.detail")
+		return
+	}
+	req, ok := s.resolveList(w, r)
+	if !ok {
+		return
+	}
+	v, d := req.View, req.Dinner
+	if !req.Team {
+		s.errorPage(w, r, http.StatusForbidden, "list.late.forbidden", "list.late.forbidden.detail")
+		return
+	}
+
+	form := lateForm{
+		regForm:   readForm(r),
+		Name:      strings.TrimSpace(r.FormValue("name")),
+		Apartment: strings.TrimSpace(r.FormValue("apartment")),
+	}
+	// Whoever forgot is counted as they are; there is no box for guests.
+	form.Guests, form.GuestNames = 0, ""
+
+	reject := func(problem string) {
+		s.renderList(w, r, req, form, problem, http.StatusUnprocessableEntity)
+	}
+	switch {
+	case d.Cancelled:
+		reject(i18n.T(v.Lang, "register.cancelled"))
+		return
+	case d.Open(v.Now):
+		reject(i18n.T(v.Lang, "list.late.stillopen"))
+		return
+	case form.Name == "":
+		reject(i18n.T(v.Lang, "list.late.needname"))
+		return
+	case len([]rune(form.Name)) > maxLateName, len([]rune(form.Apartment)) > maxLateName:
+		reject(i18n.T(v.Lang, "list.late.longname", maxLateName))
+		return
+	case form.Adults+form.Children <= 0:
+		reject(i18n.T(v.Lang, "guest.atleastone"))
+		return
+	}
+	if problem := validateParty(v.Lang, form.regForm); problem != "" {
+		reject(problem)
+		return
+	}
+
+	now := s.now()
+	reg := store.Registration{
+		ID:        auth.ID(),
+		Date:      d.Key,
+		Kind:      store.KindLate,
+		Name:      form.Name,
+		Apartment: form.Apartment,
+		Adults:    form.Adults,
+		Children:  form.Children,
+		Diet:      form.Diet,
+		Note:      form.Note,
+		CreatedAt: now, UpdatedAt: now,
+		CreatedIP: s.clientIP(r),
+	}
+	if err := s.store.SaveRegistration(r.Context(), reg); err != nil {
+		s.fail(w, r, "save late registration", err)
+		return
+	}
+	s.log.Info("late registration added by the cooking team", "date", d.Key,
+		"people", form.Adults+form.Children, "by", lateAuthor(req))
+	http.Redirect(w, r, listBack(req, "tillagd"), http.StatusSeeOther)
+}
+
+// handleListRemove takes back a party the cooking team added. The team may
+// only remove what it put there itself: a household's own answer is theirs,
+// and only the administrator overrules it.
+func (s *Server) handleListRemove(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		s.errorPage(w, r, http.StatusBadRequest, "error.form", "error.form.detail")
+		return
+	}
+	req, ok := s.resolveList(w, r)
+	if !ok {
+		return
+	}
+	if !req.Team {
+		s.errorPage(w, r, http.StatusForbidden, "list.late.forbidden", "list.late.forbidden.detail")
+		return
+	}
+	ctx := r.Context()
+	id := r.FormValue("id")
+	regs, err := s.store.Registrations(ctx, req.Dinner.Key)
+	if err != nil {
+		s.fail(w, r, "read registrations", err)
+		return
+	}
+	found := false
+	for _, reg := range regs {
+		if reg.ID == id && reg.Late() {
+			found = true
+			break
+		}
+	}
+	if !found {
+		s.errorPage(w, r, http.StatusNotFound, "list.late.notfound", "list.late.notfound.detail")
+		return
+	}
+	if err := s.store.DeleteRegistration(ctx, id); err != nil {
+		s.fail(w, r, "delete late registration", err)
+		return
+	}
+	s.log.Info("late registration removed by the cooking team", "date", req.Dinner.Key,
+		"id", id, "by", lateAuthor(req))
+	http.Redirect(w, r, listBack(req, "borttagen"), http.StatusSeeOther)
+}
+
+// lateAuthor says in the log who changed the list by hand.
+func lateAuthor(req *listRequest) string {
+	switch {
+	case req.View.Ident.MMUsername != "":
+		return req.View.Ident.MMUsername
+	case req.Key != "":
+		return "the mailed link"
+	}
+	return "unknown"
 }
 
 // handleListCSV exports one evening's list as a spreadsheet.

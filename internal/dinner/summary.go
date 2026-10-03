@@ -30,6 +30,8 @@ type Attendee struct {
 	// Standing marks a household that has not answered for this evening; the
 	// numbers come from its default for this weekday.
 	Standing bool
+	// Late marks a party the cooking team added after registration closed.
+	Late bool
 	// Member is the household's Mattermost username, which identifies it. It
 	// is deliberately never rendered to anyone but that household and the
 	// administrator.
@@ -171,7 +173,8 @@ func Resolve(regs []store.Registration, standing []store.Standing, closes time.T
 			ID: r.ID, Name: r.Name, Apartment: r.Apartment,
 			Adults: r.Adults, Children: r.Children,
 			Guests: r.Guests, GuestNames: r.GuestNames, Diet: r.Diet,
-			Note: r.Note, Host: r.Host, Guest: r.Guest(), Member: r.Member,
+			Note: r.Note, Host: r.Host, Guest: r.Guest(), Late: r.Late(),
+			Member: r.Member,
 		})
 	}
 	for _, st := range standing {

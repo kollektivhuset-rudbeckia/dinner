@@ -148,6 +148,10 @@ func (s *Server) Handler() http.Handler {
 	// signed link sent to the cooking-team leader, so it does its own check.
 	mux.HandleFunc("GET /middag/{date}/lista", s.handleList)
 	mux.HandleFunc("GET /middag/{date}/lista.csv", s.handleListCSV)
+	// After the deadline the cooking team writes in whoever forgot and told
+	// them instead, by the same key or login that opens the list.
+	mux.HandleFunc("POST /middag/{date}/lista", s.handleListAdd)
+	mux.HandleFunc("POST /middag/{date}/lista/ta-bort", s.handleListRemove)
 
 	// Who is in the house, for the pickers on the identity form and in the
 	// admin view. Behind the house password, like the pages that use it.

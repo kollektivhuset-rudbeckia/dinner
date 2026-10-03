@@ -2746,3 +2746,159 @@ func TestADateFieldSplitsWhatItIsGiven(t *testing.T) {
 		}
 	}
 }
+
+// ------------------------------------------------- the team adds latecomers --
+
+// late is the cooking team's form for somebody who forgot to register.
+func late(name string, adults, children int, diet store.Diet, key string) url.Values {
+	form := party(adults, children, diet, "")
+	form.Set("name", name)
+	if key != "" {
+		form.Set("nyckel", key)
+	}
+	return form
+}
+
+// Households forget and tell the leader instead. The leader, following the
+// mailed link and not logged in, writes them in after the deadline, and can
+// take them out again.
+func TestTheCookingTeamAddsSomeoneWhoForgot(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	path := "/middag/" + shutDay + "/lista"
+	key := h.guard.Key(listKeyPurpose, shutDay, time.Hour)
+
+	leader := h.client(t)
+	body := leader.get(path + "?nyckel=" + url.QueryEscape(key)).Body.String()
+	if !strings.Contains(body, `action="/middag/`+shutDay+`/lista#efteranmalan"`) {
+		t.Fatal("the leader should be offered a way to add someone after the deadline")
+	}
+	if !strings.Contains(body, `name="nyckel" value="`) {
+		t.Error("the form should carry the key, or a leader who is not logged in is bounced")
+	}
+
+	rec := leader.post(path, late("Glömske Gustav", 2, 1, store.DietVegetarian, key))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("adding = %d — %s", rec.Code, rec.Body.String())
+	}
+	back := rec.Header().Get("Location")
+	if !strings.Contains(back, "nyckel=") {
+		t.Errorf("the leader should land back on the list with their key, got %q", back)
+	}
+
+	regs, _ := h.store.Registrations(ctx, shutDay)
+	if len(regs) != 1 || regs[0].Kind != store.KindLate || regs[0].Name != "Glömske Gustav" {
+		t.Fatalf("got %+v", regs)
+	}
+	sum, _ := h.summary(ctx, h.dinner(t, shutDay))
+	if sum.People != 3 || sum.Count(store.DietVegetarian) != 3 {
+		t.Errorf("the latecomers should count: %+v", sum)
+	}
+
+	body = leader.get(back).Body.String()
+	for _, want := range []string{"Glömske Gustav", "tillagd av matlaget", "Tillagd på listan", "/lista/ta-bort"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the list should show %q", want)
+		}
+	}
+
+	rec = leader.post(path+"/ta-bort", url.Values{"id": {regs[0].ID}, "nyckel": {key}})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("removing = %d", rec.Code)
+	}
+	if left, _ := h.store.Registrations(ctx, shutDay); len(left) != 0 {
+		t.Errorf("the latecomer should be gone, got %+v", left)
+	}
+}
+
+// The leader is the team whether they come by the mail or by logging in.
+func TestALoggedInLeaderCanAddWithoutTheKey(t *testing.T) {
+	h := newHarness(t)
+	d := h.dinner(t, shutDay)
+	if d.Team == nil {
+		t.Fatal("the evening needs a team")
+	}
+
+	leader := h.client(t)
+	leader.member(d.Team.LeaderName, d.Team.LeaderUsername)
+	rec := leader.post("/middag/"+shutDay+"/lista", late("Glömske Gustav", 1, 0, store.DietOmnivore, ""))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("the leader adding = %d — %s", rec.Code, rec.Body.String())
+	}
+	if regs, _ := h.store.Registrations(context.Background(), shutDay); len(regs) != 1 {
+		t.Errorf("got %d registrations", len(regs))
+	}
+}
+
+// Only the team adds, only once households no longer can, and the team only
+// takes back what it put there.
+func TestOnlyTheTeamChangesTheListAfterTheDeadline(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	path := "/middag/" + shutDay + "/lista"
+	form := late("Inkräktare", 5, 0, store.DietOmnivore, "")
+
+	// A member of the house who is not the leader may read the list but not
+	// write in it.
+	member := h.client(t)
+	member.member("Anna", "anna.andersson")
+	if body := member.get(path).Body.String(); strings.Contains(body, "efteranmalan") {
+		t.Error("a member should not be offered the form")
+	}
+	if rec := member.post(path, form); rec.Code != http.StatusForbidden {
+		t.Errorf("a member adding = %d, want 403", rec.Code)
+	}
+
+	// Nobody gets in without the key, and the key is for one evening.
+	stranger := h.client(t)
+	if rec := stranger.post(path, form); rec.Code != http.StatusSeeOther {
+		t.Errorf("a stranger adding = %d, want a redirect to log in", rec.Code)
+	}
+	other := late("Inkräktare", 5, 0, store.DietOmnivore, h.guard.Key(listKeyPurpose, openDay, time.Hour))
+	if rec := stranger.post(path, other); rec.Code != http.StatusSeeOther {
+		t.Errorf("another evening's key = %d, want a redirect to log in", rec.Code)
+	}
+	if regs, _ := h.store.Registrations(ctx, shutDay); len(regs) != 0 {
+		t.Fatalf("nothing should have been added: %+v", regs)
+	}
+
+	// While registration is open the household does it themselves.
+	openKey := h.guard.Key(listKeyPurpose, openDay, time.Hour)
+	body := stranger.get("/middag/" + openDay + "/lista?nyckel=" + url.QueryEscape(openKey)).Body.String()
+	if strings.Contains(body, "efteranmalan") {
+		t.Error("the form should wait until registration closes")
+	}
+	if rec := stranger.post("/middag/"+openDay+"/lista", late("Tidig", 1, 0, store.DietOmnivore, openKey)); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("adding while open = %d, want 422", rec.Code)
+	}
+
+	// A household's own answer is theirs: the team cannot remove it.
+	now := testNow
+	own := store.Registration{
+		ID: auth.ID(), Date: shutDay, Kind: store.KindMember, Member: "anna.andersson",
+		Name: "Anna", Adults: 2, Diet: store.DietOmnivore, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := h.store.SaveRegistration(ctx, own); err != nil {
+		t.Fatal(err)
+	}
+	key := h.guard.Key(listKeyPurpose, shutDay, time.Hour)
+	if rec := stranger.post(path+"/ta-bort", url.Values{"id": {own.ID}, "nyckel": {key}}); rec.Code != http.StatusNotFound {
+		t.Errorf("the team removing a household's answer = %d, want 404", rec.Code)
+	}
+	if regs, _ := h.store.Registrations(ctx, shutDay); len(regs) != 1 {
+		t.Error("the household's answer should still be there")
+	}
+
+	// And the team's form is checked like any other.
+	for name, bad := range map[string]url.Values{
+		"no name":   late("", 1, 0, store.DietOmnivore, key),
+		"nobody":    late("Tom", 0, 0, store.DietOmnivore, key),
+		"no diet":   late("Tom", 1, 0, "", key),
+		"too many":  late("Tom", 21, 0, store.DietOmnivore, key),
+		"long name": late(strings.Repeat("x", 101), 1, 0, store.DietOmnivore, key),
+	} {
+		if rec := stranger.post(path, bad); rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("%s = %d, want 422", name, rec.Code)
+		}
+	}
+}
