@@ -539,5 +539,209 @@
 	{{end}}
 </section>
 {{end}}
+
+{{if eq .Data.Tab "statistik"}}
+{{/* --------------------------------------------------------- statistics -- */}}
+{{with .Data.Stats}}
+<section class="panel" id="statistik">
+	<div class="panel-head">
+		<h2>{{t "admin.tab.stats"}}</h2>
+	</div>
+	<p class="muted">{{t "stats.body"}}</p>
+
+	<ul class="stat-tiles">
+		<li class="stat-tile">
+			<span class="stat-label">{{t "stats.month" .MonthName}}</span>
+			<strong class="stat-value">{{.Month.Meals}}</strong>
+			<span class="stat-sub">{{t "stats.meals.at" (count "dinner" .Month.Dinners)}}</span>
+		</li>
+		<li class="stat-tile">
+			<span class="stat-label">{{if .SeasonName}}{{.SeasonName}}{{else}}{{t "stats.season"}}{{end}}</span>
+			<strong class="stat-value">{{.Season.Meals}}</strong>
+			<span class="stat-sub">{{t "stats.meals.at" (count "dinner" .Season.Dinners)}}</span>
+		</li>
+		<li class="stat-tile">
+			<span class="stat-label">{{t "stats.alltime"}}</span>
+			<strong class="stat-value">{{.All.Meals}}</strong>
+			<span class="stat-sub">{{t "stats.meals.at" (count "dinner" .All.Dinners)}}</span>
+		</li>
+		{{with .Next}}
+		<li class="stat-tile">
+			<span class="stat-label">{{t "stats.next" (weekdayShort .Dinner.Date) (dateShort .Dinner.Date)}}</span>
+			<strong class="stat-value">{{.People}}</strong>
+			<span class="stat-sub">{{t "stats.next.sofar"}}</span>
+		</li>
+		{{end}}
+	</ul>
+
+	<nav class="scopes" aria-label="{{t "stats.scope"}}">
+		{{range .Scopes}}
+		<a class="scope{{if .Current}} is-current{{end}}" href="/admin?flik=statistik&amp;sasong={{.Key}}"
+		   {{if .Current}}aria-current="page"{{end}}>{{.Name}}</a>
+		{{end}}
+	</nav>
+
+	{{with .Scope}}
+	{{if .Evenings}}
+	<ul class="facts stat-facts">
+		<li><span>{{t "stats.dinners"}}</span><strong>{{len .Evenings}}</strong></li>
+		<li><span>{{t "stats.meals"}}</span><strong>{{.Meals}}</strong></li>
+		<li><span>{{t "stats.average"}}</span><strong>{{.Average}}</strong></li>
+		{{with .Busiest}}<li><span>{{t "stats.busiest"}}</span><strong>{{.People}} · {{dateShort .Dinner.Date}}</strong></li>{{end}}
+		{{with .Quietest}}<li><span>{{t "stats.quietest"}}</span><strong>{{.People}} · {{dateShort .Dinner.Date}}</strong></li>{{end}}
+		<li><span>{{t "stats.adults"}}</span><strong>{{.Adults}}</strong></li>
+		<li><span>{{t "stats.children"}}</span><strong>{{.Children}}</strong></li>
+		<li><span>{{t "stats.part.standing"}}</span><strong>{{.Standing}}</strong></li>
+		<li><span>{{t "stats.part.booked"}}</span><strong>{{.Booked}}</strong></li>
+		<li><span>{{t "stats.part.brought"}}</span><strong>{{.Brought}}</strong></li>
+		<li><span>{{t "stats.part.external"}}</span><strong>{{.External}}</strong></li>
+		<li><span>{{t "stats.households"}}</span><strong>{{.Households}}</strong></li>
+		<li><span>{{t "stats.late"}}</span><strong>{{.Late}}</strong></li>
+		<li><span>{{t "stats.cancelled"}}</span><strong>{{.Cancelled}}</strong></li>
+	</ul>
+
+	<figure class="chart">
+		<figcaption>
+			<h3 class="chart-title">{{t "stats.chart.trend"}}</h3>
+			<p class="muted small">{{t "stats.chart.trend.body"}}</p>
+		</figcaption>
+		{{with .Trend}}
+		<svg class="chart-svg" viewBox="{{.ViewBox}}" role="img" aria-label="{{t "stats.chart.trend"}}">
+			{{template "chartaxes" .}}
+			<line class="chart-avg" x1="{{.Left}}" x2="{{.Right}}" y1="{{.AvgY}}" y2="{{.AvgY}}"/>
+			<text class="chart-avg-label" x="{{.Right}}" y="{{.AvgY}}" dy="-6" text-anchor="end">{{.AvgLabel}}</text>
+			<polyline class="chart-line" points="{{.Line}}"/>
+			{{$dots := .Dots}}
+			{{$f := .}}
+			{{range .Cols}}
+			<g class="chart-col">
+				<title>{{.Title}}</title>
+				<rect class="chart-hit" x="{{.X}}" y="{{$f.Top}}" width="{{.W}}" height="{{$f.Bottom}}"/>
+				<line class="chart-guide" x1="{{.Guide}}" x2="{{.Guide}}" y1="{{$f.Top}}" y2="{{$f.Bottom}}"/>
+				<circle class="chart-dot{{if not $dots}} is-hover{{end}}" cx="{{.Guide}}" cy="{{.DotY}}" r="4"/>
+			</g>
+			{{end}}
+		</svg>
+		{{end}}
+	</figure>
+
+	<figure class="chart">
+		<figcaption>
+			<h3 class="chart-title">{{t "stats.chart.stack"}}</h3>
+			<p class="muted small">{{t "stats.chart.stack.body"}}</p>
+			<ul class="chart-legend">
+				{{range .Stack.Layers}}<li><span class="swatch {{.Class}}" aria-hidden="true"></span>{{.Name}}</li>{{end}}
+			</ul>
+		</figcaption>
+		{{with .Stack}}
+		<svg class="chart-svg" viewBox="{{.ViewBox}}" role="img" aria-label="{{t "stats.chart.stack"}}">
+			{{template "chartaxes" .}}
+			{{range .Layers}}<path class="chart-band {{.Class}}" d="{{.Path}}"/>{{end}}
+			{{$f := .}}
+			{{range .Layers}}{{if .LabelY}}<text class="chart-band-label" x="{{$f.Right}}" dx="-6" y="{{.LabelY}}" text-anchor="end">{{.Name}}</text>{{end}}{{end}}
+			{{range .Cols}}
+			<g class="chart-col">
+				<title>{{.Title}}</title>
+				<rect class="chart-hit" x="{{.X}}" y="{{$f.Top}}" width="{{.W}}" height="{{$f.Bottom}}"/>
+				<line class="chart-guide" x1="{{.Guide}}" x2="{{.Guide}}" y1="{{$f.Top}}" y2="{{$f.Bottom}}"/>
+			</g>
+			{{end}}
+		</svg>
+		{{end}}
+	</figure>
+
+	<div class="stat-grid">
+		{{template "hbars" dict "Title" (t "stats.diets") "Body" (t "stats.diets.body") "Bars" .Diets}}
+		{{template "hbars" dict "Title" (t "stats.weekdays") "Body" (t "stats.weekdays.body") "Bars" .Weekdays}}
+		{{template "hbars" dict "Title" (t "stats.teams") "Body" (t "stats.teams.body") "Bars" .Teams}}
+		{{template "hbars" dict "Title" (t "stats.faithful") "Body" (t "stats.faithful.body") "Bars" .Faithful}}
+	</div>
+
+	<details class="stat-table">
+		<summary>{{t "stats.table"}}</summary>
+		<div class="table-wrap">
+			<table class="table">
+				<thead>
+					<tr><th>{{t "stats.table.date"}}</th><th>{{t "stats.table.team"}}</th>
+					<th class="num">{{t "stats.part.standing"}}</th><th class="num">{{t "stats.part.booked"}}</th>
+					<th class="num">{{t "stats.part.brought"}}</th><th class="num">{{t "stats.part.external"}}</th>
+					<th class="num">{{t "stats.table.total"}}</th></tr>
+				</thead>
+				<tbody>
+					{{range .Evenings}}
+					<tr>
+						<td><a href="/middag/{{.Dinner.Key}}/lista">{{weekdayShort .Dinner.Date}} {{dateShort .Dinner.Date}} {{.Dinner.Date.Year}}</a></td>
+						<td>{{with .Dinner.Team}}{{.Name}}{{end}}</td>
+						<td class="num">{{.Standing}}</td><td class="num">{{.Booked}}</td>
+						<td class="num">{{.Brought}}</td><td class="num">{{.External}}</td>
+						<td class="num"><strong>{{.People}}</strong></td>
+					</tr>
+					{{end}}
+				</tbody>
+			</table>
+		</div>
+	</details>
+	{{else}}
+	<p class="empty">{{t "stats.empty"}}</p>
+	{{end}}
+
+	{{with .Months}}{{if not .Empty}}
+	<figure class="chart">
+		<figcaption>
+			<h3 class="chart-title">{{t "stats.chart.months"}}</h3>
+			<p class="muted small">{{t "stats.chart.months.body"}}</p>
+		</figcaption>
+		<svg class="chart-svg" viewBox="{{.ViewBox}}" role="img" aria-label="{{t "stats.chart.months"}}">
+			{{template "chartaxes" .}}
+			{{range .Bars}}<path class="chart-bar" d="{{.Path}}"/>{{end}}
+			{{$f := .}}
+			{{range .Cols}}
+			<g class="chart-col">
+				<title>{{.Title}}</title>
+				<rect class="chart-hit" x="{{.X}}" y="{{$f.Top}}" width="{{.W}}" height="{{$f.Bottom}}"/>
+			</g>
+			{{end}}
+		</svg>
+	</figure>
+	{{end}}{{end}}
+	{{end}}
+</section>
+{{end}}
+{{end}}
 {{end}}
 {{template "base" .}}
+
+{{/* The grid and the labels every chart on the statistics tab shares. */}}
+{{define "chartaxes"}}
+<g class="chart-axes" aria-hidden="true">
+	{{$f := .}}
+	{{range .YTicks}}
+	<line class="chart-grid" x1="{{$f.Left}}" x2="{{$f.Right}}" y1="{{.Pos}}" y2="{{.Pos}}"/>
+	<text class="chart-tick" x="{{$f.Left}}" dx="-6" y="{{.Pos}}" dy="4" text-anchor="end">{{.Label}}</text>
+	{{end}}
+	{{range .XTicks}}
+	<text class="chart-tick" x="{{.Pos}}" y="{{$f.Bottom}}" dy="18" text-anchor="middle">{{.Label}}</text>
+	{{end}}
+</g>
+{{end}}
+
+{{/* A list of horizontal bars: a label, its number and a bar to compare. */}}
+{{define "hbars"}}
+<div class="hbars">
+	<h3 class="chart-title">{{.Title}}</h3>
+	<p class="muted small">{{.Body}}</p>
+	{{if .Bars}}
+	<ul class="hbar-list">
+		{{range .Bars}}
+		<li class="hbar">
+			<span class="hbar-label">{{.Label}}</span>
+			<span class="hbar-value">{{.Value}}{{with .Detail}} <small>{{.}}</small>{{end}}</span>
+			<span class="hbar-track" aria-hidden="true"><span class="hbar-fill" style="width: {{.Pct}}%"></span></span>
+		</li>
+		{{end}}
+	</ul>
+	{{else}}
+	<p class="empty">{{t "stats.empty.short"}}</p>
+	{{end}}
+</div>
+{{end}}

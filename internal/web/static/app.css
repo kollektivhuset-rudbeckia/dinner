@@ -832,3 +832,94 @@ label { font-size: .85rem; }
 	padding: .8rem 1.1rem; border-radius: var(--radius);
 	background: var(--bg-sunk); margin-bottom: 1.5rem;
 }
+
+/* ---------- Statistics ---------- */
+/* The four bands of the "how they came" chart. Flexoki hues, checked for
+   colour-blind separation against the panel in each theme; the dark theme has
+   its own steps rather than the light ones flipped. */
+:root {
+	--series-1: #205ea6;
+	--series-2: #d0a215;
+	--series-3: #ce5d97;
+	--series-4: #66800b;
+}
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme="light"]) {
+		--series-1: #4385be;
+		--series-2: #ad8301;
+		--series-3: #ce5d97;
+		--series-4: #879a39;
+	}
+}
+:root[data-theme="dark"] {
+	--series-1: #4385be;
+	--series-2: #ad8301;
+	--series-3: #ce5d97;
+	--series-4: #879a39;
+}
+
+.stat-tiles {
+	list-style: none; margin: 1.25rem 0 1.5rem; padding: 0;
+	display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+}
+.stat-tile {
+	display: flex; flex-direction: column; gap: .15rem;
+	background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius);
+	padding: .9rem 1rem;
+}
+.stat-label { font-size: .74rem; text-transform: uppercase; letter-spacing: .04em; color: var(--text-faint); }
+.stat-value { font-size: 2rem; font-weight: 600; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.stat-sub { font-size: .82rem; color: var(--text-muted); }
+
+/* The periods to look at, as plain links: a period is an address too. */
+.scopes { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 1rem; }
+.scope {
+	font-size: .85rem; text-decoration: none; color: var(--text-muted);
+	padding: .3rem .75rem; border: 1px solid var(--line); border-radius: 999px; background: var(--bg);
+}
+.scope:hover { color: var(--text); }
+.scope.is-current { color: var(--accent-strong); background: var(--accent-soft); border-color: var(--accent-line); font-weight: 500; }
+.stat-facts { margin-bottom: 1.5rem; }
+.stat-facts strong { font-variant-numeric: tabular-nums; }
+
+.chart { margin: 0 0 2rem; }
+.chart figcaption { margin-bottom: .5rem; }
+.chart-title { font-size: 1rem; margin: 0 0 .2rem; }
+.chart figcaption p { margin: 0; max-width: 46rem; }
+.chart-svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart-grid { stroke: var(--line); stroke-width: 1; }
+.chart-tick { fill: var(--text-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart-avg { stroke: var(--text-faint); stroke-width: 1; stroke-dasharray: 4 4; }
+.chart-avg-label { fill: var(--text-muted); font-size: 11px; }
+.chart-dot { fill: var(--accent); stroke: var(--bg-soft); stroke-width: 2; }
+.chart-dot.is-hover { opacity: 0; }
+.chart-hit { fill: transparent; }
+.chart-guide { stroke: var(--text-faint); stroke-width: 1; opacity: 0; }
+.chart-col:hover .chart-guide,
+.chart-col:hover .chart-dot { opacity: 1; }
+.chart-col:hover .chart-dot { r: 5; }
+.chart-col:hover .chart-hit { fill: var(--text); fill-opacity: .04; }
+/* A 2px seam of the panel's own colour between neighbouring bands, so each
+   band reads as a shape rather than by colour alone. */
+.chart-band { stroke: var(--bg-soft); stroke-width: 2; stroke-linejoin: round; }
+.chart-band-label { fill: var(--paper); font-size: 11px; font-weight: 600; paint-order: stroke; stroke: rgb(16 15 15 / 35%); stroke-width: 2px; }
+.chart-bar { fill: var(--accent); }
+.s1 { fill: var(--series-1); background: var(--series-1); }
+.s2 { fill: var(--series-2); background: var(--series-2); }
+.s3 { fill: var(--series-3); background: var(--series-3); }
+.s4 { fill: var(--series-4); background: var(--series-4); }
+.chart-legend { list-style: none; margin: .5rem 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: .35rem 1.1rem; font-size: .85rem; color: var(--text-muted); }
+.chart-legend li { display: inline-flex; align-items: center; gap: .4rem; }
+.swatch { display: inline-block; width: .8rem; height: .8rem; border-radius: 3px; }
+
+.stat-grid { display: grid; gap: 1.5rem 2rem; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); margin-bottom: 2rem; }
+.hbars p { margin: 0 0 .6rem; }
+.hbar-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .55rem; }
+.hbar { display: grid; grid-template-columns: 1fr auto; gap: .2rem .75rem; font-size: .9rem; }
+.hbar-value { font-variant-numeric: tabular-nums; font-weight: 500; text-align: right; }
+.hbar-value small { font-weight: 400; color: var(--text-muted); font-size: .78rem; }
+.hbar-track { grid-column: 1 / -1; height: 6px; background: var(--bg-sunk); border-radius: 999px; overflow: hidden; }
+.hbar-fill { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+.stat-table { margin-bottom: 2rem; }
+.stat-table summary { cursor: pointer; color: var(--text-muted); font-size: .92rem; margin-bottom: .75rem; }

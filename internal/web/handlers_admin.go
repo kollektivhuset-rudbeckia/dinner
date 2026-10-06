@@ -44,6 +44,7 @@ var adminTabs = []struct{ ID, Key string }{
 	{"uppehall", "admin.tab.breaks"},
 	{"installningar", "admin.tab.settings"},
 	{"staende", "admin.tab.standing"},
+	{statsTab, "admin.tab.stats"},
 }
 
 // tab is one entry in the tab bar, with its name already translated.
@@ -162,6 +163,27 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request, v *view) {
 		}
 	}
 
+	var stats *statsPage
+	if tab == statsTab {
+		// Every dinner that has been served, and the next one to be: the
+		// statistics are about what happened, plus what is booked so far.
+		var dinners []dinner.Dinner
+		for _, d := range world.Schedule.Dinners {
+			dinners = append(dinners, d)
+			if !d.Over(v.Now) && !d.Cancelled {
+				break
+			}
+		}
+		summaries, err := s.summarize(ctx, dinners)
+		if err != nil {
+			s.fail(w, r, "summarize dinners", err)
+			return
+		}
+		page := buildStats(v.Lang, world.Schedule, world.Seasons, summaries,
+			r.URL.Query().Get("sasong"), v.Now)
+		stats = &page
+	}
+
 	// The badge is on every tab bar, not only the one it belongs to: the whole
 	// point of it is to be seen by an administrator who came to do something
 	// else.
@@ -202,6 +224,7 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request, v *view) {
 		"Regulars": regulars,
 		"Waiting":  waiting,
 		"Weekdays": allWeekdays(),
+		"Stats":    stats,
 		// The years the date selectors offer.
 		"Years":      yearOptions(world, v.Now),
 		"GuestURL":   s.rt.BaseURL + "/gast",
